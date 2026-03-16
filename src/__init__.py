@@ -7,6 +7,13 @@ from .sdsd import (
     sparse_dingo_dp,
     DINGOResult,
     compute_transition_costs_sparse,
+    herding_decode,
+    HerdingResult,
+    speculative_decode,
+    SpeculativeResult,
+    build_speculative_tree,
+    select_path_herding,
+    SpeculativeNode,
 )
 
 __all__ = [
@@ -16,4 +23,11 @@ __all__ = [
     "sparse_dingo_dp",
     "DINGOResult",
     "compute_transition_costs_sparse",
+    "herding_decode",
+    "HerdingResult",
+    "speculative_decode",
+    "SpeculativeResult",
+    "build_speculative_tree",
+    "select_path_herding",
+    "SpeculativeNode",
 ]

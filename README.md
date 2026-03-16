@@ -17,10 +17,16 @@ src/
 ├── csr_dfa.py         # STATIC-style CSR format for DFA
 ├── sparse_dingo.py    # B2: O(K) DINGO DP (STATIC + DINGO)
 ├── baseline_dingo.py  # B1: O(N) DINGO baseline
+├── herding.py         # B3: Herding momentum for blocked intentions
+├── speculative_tree.py  # Self-Speculative Tree: NFE reduction
+├── sdsd.py            # SDSD: full pipeline
 ├── benchmark_b1_b2.py # B1 vs B2 benchmark
 ├── test_dllm_sdsd.py  # DLLM integration (LLaDA/Dream)
-├── sdsd.py            # Main module
-└── test_sdsd.py       # Test suite
+├── test_sdsd.py       # Test suite
+└── eval/
+    ├── evaluate.py    # B1/B2/B3/SDSD evaluation
+    ├── intent_recovery.py  # Intent recovery ablation
+    └── metrics.py     # Parse rate, constraint satisfaction
 ```
 
 ## Usage
@@ -75,6 +81,27 @@ cd src && python test_dllm_sdsd.py --model llada  # LLaDA-8B-Instruct (needs ~16
 ```
 
 Requires: `pip install torch transformers`. Dream needs transformers>=4.46; LLaDA needs transformers==4.38.2.
+
+## Run B1/B2/B3/SDSD Evaluation
+
+```bash
+python run_experiments.py --model dream --mock          # Synthetic (no GPU)
+python run_experiments.py --model dream --samples 10   # Dream-7B (GPU)
+python run_experiments.py --model llada                # LLaDA-8B (GPU)
+python run_experiments.py --intent-recovery-only       # Intent recovery ablation only
+```
+
+Output: `results/experiment_results.json` (or `--output` path). Metrics: Latency, NFE, TTFT, Success rate, Intent recovery steps.
+
+## Run Intent Recovery Ablation
+
+Compares B2 (STATIC+DINGO) vs Herding (SDSD) on recovery after perturbing: inject low-prob token at step t, measure steps until high-prob token is chosen again. Herding recovers faster due to momentum preservation.
+
+```bash
+cd src && python -m eval.intent_recovery
+```
+
+## Benchmark Output
 
 Output is written to `benchmark_results.txt`. Metrics:
 - **Latency (ms)**: Total time per block decode

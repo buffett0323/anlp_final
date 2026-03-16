@@ -21,6 +21,8 @@ from sparse_dingo import (
     DINGOResult,
 )
 from baseline_dingo import baseline_dingo_dp
+from herding import herding_decode, HerdingResult
+from speculative_tree import speculative_decode, SpeculativeResult
 
 
 def test_csr_conversion():
@@ -254,6 +256,72 @@ def test_b1_b2_equivalence():
     print("  ✓ B1/B2 equivalence verified\n")
 
 
+def test_herding_momentum():
+    """Test Herding preserves blocked intentions via momentum."""
+    print("=" * 60)
+    print("Test 7: Herding Momentum")
+    print("=" * 60)
+    
+    # DFA: 0 --0--> 1 (only 0 valid at start), 1 --2--> 2
+    # Step 0: model wants token 1 (0.8) but grammar forces 0 - "sampling wall"
+    # Herding: w += p - e_0, so w[1]=0.8 accumulates (blocked intention)
+    transitions = {(0, 0): 1, (1, 2): 2}
+    csr = build_csr_from_transition_dict(transitions, num_states=3, vocab_size=10)
+    
+    prob_vectors = [[0.0] * 10 for _ in range(2)]
+    prob_vectors[0][0], prob_vectors[0][1] = 0.2, 0.8  # forced to take 0, model wanted 1
+    prob_vectors[1][2] = 1.0
+    
+    result = herding_decode(csr, prob_vectors, start_state=0, live_states={2})
+    assert result.success
+    assert result.tokens == [0, 2]
+    # After step 0: w = p - e_0 => w[1]=0.8 (blocked mass for token 1)
+    assert result.momentum_trace[1][1] > 0.5
+    print(f"  Herding decode: {result.tokens}")
+    print(f"  Momentum w[1]={result.momentum_trace[1][1]:.2f} (blocked mass preserved)")
+    print("  ✓ Herding momentum verified\n")
+
+
+def test_speculative_tree():
+    """Test Self-Speculative Tree: one forward pass → multiple tokens."""
+    print("=" * 60)
+    print("Test 8: Self-Speculative Tree")
+    print("=" * 60)
+
+    # DFA: 0->1 on 0, 0->0 on 1, 1->2 on 2. Path [0,2] or [1,0,2]
+    transitions = {(0, 0): 1, (0, 1): 0, (1, 2): 2}
+    csr = build_csr_from_transition_dict(transitions, num_states=3, vocab_size=10)
+
+    # One "forward pass" predicts 3 positions
+    prob_vectors = [[0.0] * 10 for _ in range(3)]
+    prob_vectors[0][0], prob_vectors[0][1] = 0.9, 0.1
+    prob_vectors[1][2] = 1.0
+    prob_vectors[2][2] = 1.0  # state 2 may have self-loop if we add it
+
+    # Path 0->1->2 gives tokens [0, 2]. Need 2 prob vectors for 2 steps.
+    prob_vectors = prob_vectors[:2]
+    result = speculative_decode(csr, prob_vectors, start_state=0, live_states={2})
+    assert result.success
+    assert result.tokens == [0, 2]
+    assert result.nfe_used == 1
+    assert result.draft_length == 2
+    print(f"  Draft length=2, tokens={result.tokens}, NFE={result.nfe_used}")
+    print("  ✓ Bonus: 2 tokens from 1 forward pass\n")
+
+    # Full tree with draft_length=3 (permissive DFA)
+    from test_dllm_sdsd import build_permissive_dfa
+    csr_p, start_p, live_p = build_permissive_dfa(100)
+    probs_3 = [[0.0] * 100 for _ in range(3)]
+    for i in range(3):
+        probs_3[i][i % 50] = 0.5
+        probs_3[i][(i + 1) % 50] = 0.5
+    res3 = speculative_decode(csr_p, probs_3, start_p, live_p, draft_length=3)
+    assert len(res3.tokens) == 3
+    assert res3.nfe_used == 1
+    print(f"  Draft length=3, got {len(res3.tokens)} tokens, NFE={res3.nfe_used}")
+    print("  ✓ Self-Speculative Tree verified\n")
+
+
 def run_all_tests():
     """Run all SDSD tests."""
     print("\n" + "=" * 60)
@@ -266,6 +334,8 @@ def run_all_tests():
     test_json_like_dfa()
     test_complexity_benchmark()
     test_b1_b2_equivalence()
+    test_herding_momentum()
+    test_speculative_tree()
     
     print("=" * 60)
     print("All tests passed! ✓")

@@ -18,6 +18,14 @@ from __future__ import annotations
 
 from .csr_dfa import CSRTransitionMatrix, build_csr_from_dfa, build_csr_from_transition_dict
 from .sparse_dingo import sparse_dingo_dp, DINGOResult, compute_transition_costs_sparse
+from .herding import herding_decode, HerdingResult
+from .speculative_tree import (
+    speculative_decode,
+    SpeculativeResult,
+    build_speculative_tree,
+    select_path_herding,
+    SpeculativeNode,
+)
 
 __all__ = [
     "CSRTransitionMatrix",
@@ -26,4 +34,11 @@ __all__ = [
     "sparse_dingo_dp",
     "DINGOResult",
     "compute_transition_costs_sparse",
+    "herding_decode",
+    "HerdingResult",
+    "speculative_decode",
+    "SpeculativeResult",
+    "build_speculative_tree",
+    "select_path_herding",
+    "SpeculativeNode",
 ]

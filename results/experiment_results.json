@@ -1,0 +1,58 @@
+{
+  "intent_recovery": {
+    "B2_tokens": [
+      0,
+      0,
+      1,
+      1,
+      1
+    ],
+    "Herding_tokens": [
+      0,
+      1,
+      0,
+      1,
+      1
+    ],
+    "B2_success": true,
+    "Herding_success": true,
+    "B2_recovery_steps": 2,
+    "Herding_recovery_steps": 1
+  },
+  "evaluation": {
+    "model": "dream",
+    "mock": true,
+    "num_samples": 10,
+    "block_length": 16,
+    "summary": {
+      "B1": {
+        "latency_ms_mean": 85.12057912303135,
+        "nfe_mean": 1.0,
+        "ttft_ms_mean": 85.12057912303135,
+        "success_rate": 1.0,
+        "n_tokens_mean": 16.0
+      },
+      "B2": {
+        "latency_ms_mean": 0.2986124949529767,
+        "nfe_mean": 1.0,
+        "ttft_ms_mean": 0.2986124949529767,
+        "success_rate": 1.0,
+        "n_tokens_mean": 16.0
+      },
+      "B3": {
+        "latency_ms_mean": 15.789716609288007,
+        "nfe_mean": 1.0,
+        "ttft_ms_mean": 15.789716609288007,
+        "success_rate": 1.0,
+        "n_tokens_mean": 16.0
+      },
+      "SDSD": {
+        "latency_ms_mean": 17.55737909115851,
+        "nfe_mean": 1.0,
+        "ttft_ms_mean": 17.55737909115851,
+        "success_rate": 1.0,
+        "n_tokens_mean": 16.0
+      }
+    }
+  }
+}
