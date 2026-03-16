@@ -93,6 +93,18 @@ python run_experiments.py --model llada                # LLaDA-8B (GPU)
 python run_experiments.py --intent-recovery-only       # Intent recovery ablation only
 ```
 
+## Run Ablation Study
+
+See [docs/ABLATION_EXPERIMENT_DESIGN.md](docs/ABLATION_EXPERIMENT_DESIGN.md) for full design.
+
+```bash
+python run_ablation.py --model dream --mock --samples 20   # Synthetic
+python run_ablation.py --model dream --samples 20           # Dream-7B
+python run_ablation.py --model dream --dataset json-mode-eval  # With dataset
+```
+
+Dataset download: [docs/DATASET_DOWNLOAD_GUIDE.md](docs/DATASET_DOWNLOAD_GUIDE.md)
+
 Output: `results/experiment_results.json` (or `--output` path). Metrics: Latency, NFE, TTFT, Success rate, Intent recovery steps.
 
 ## Run Intent Recovery Ablation

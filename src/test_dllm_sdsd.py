@@ -105,6 +105,9 @@ def load_llada_model(device: torch.device):
             torch_dtype=torch.bfloat16,
             trust_remote_code=True,
         ).to(device).eval()
+        # LLaDAConfig may lack use_cache (cached config / transformers version mismatch)
+        if not hasattr(model.config, "use_cache"):
+            model.config.use_cache = False
         return model, tokenizer
     finally:
         if needs_patch:
@@ -158,6 +161,85 @@ def get_block_logits_dream(
     return prob_vectors, mask_id
 
 
+def get_logits_for_position_dream(
+    model, tokenizer, prompt: str, prefix_tokens: list[int], device: torch.device
+) -> tuple[list[float], int]:
+    """
+    Step-by-step: 1 forward → logits for next position only. NFE = 1 per call.
+    Used for sequential (Baseline) decoding where NFE = block_length.
+    """
+    messages = [{"role": "user", "content": prompt}]
+    inputs = tokenizer.apply_chat_template(
+        messages, return_tensors="pt", return_dict=True, add_generation_prompt=True
+    )
+    input_ids = inputs.input_ids.to(device)
+    attention_mask = inputs.attention_mask.to(device) if inputs.attention_mask is not None else None
+
+    mask_id = getattr(tokenizer, "mask_token_id", None) or getattr(model.config, "mask_token_id", None)
+    if mask_id is None:
+        mask_id = tokenizer.pad_token_id or 0
+
+    if prefix_tokens:
+        prefix = torch.tensor([prefix_tokens], dtype=torch.long, device=device)
+        block_ids = torch.cat([prefix, torch.full((1, 1), mask_id, dtype=torch.long, device=device)], dim=1)
+    else:
+        block_ids = torch.full((1, 1), mask_id, dtype=torch.long, device=device)
+
+    full_ids = torch.cat([input_ids, block_ids], dim=1)
+
+    if attention_mask is not None:
+        attn = torch.ones(1, full_ids.shape[1], device=device, dtype=torch.bfloat16)
+        attn[0, : input_ids.shape[1]] = attention_mask[0].to(torch.bfloat16)
+    else:
+        attn = None
+
+    with torch.no_grad():
+        try:
+            out = model(full_ids, attention_mask=attn)
+        except TypeError:
+            out = model(full_ids)
+
+    pos = full_ids.shape[1] - 2
+    if pos < 0:
+        pos = 0
+    logit = out.logits[0, pos, :].float()
+    probs = F.softmax(logit, dim=-1).cpu().tolist()
+    return probs, mask_id
+
+
+def get_logits_for_position_llada(
+    model, tokenizer, prompt: str, prefix_tokens: list[int], device: torch.device
+) -> tuple[list[float], int]:
+    """
+    Step-by-step: 1 forward → logits for next position only. NFE = 1 per call.
+    """
+    messages = [{"role": "user", "content": prompt}]
+    prompt_str = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    input_ids = tokenizer(prompt_str, return_tensors="pt")["input_ids"].to(device)
+
+    mask_id = getattr(model.config, "mask_token_id", None) or tokenizer.pad_token_id or 0
+
+    if prefix_tokens:
+        prefix = torch.tensor([prefix_tokens], dtype=torch.long, device=device)
+        block_ids = torch.cat([prefix, torch.full((1, 1), mask_id, dtype=torch.long, device=device)], dim=1)
+    else:
+        block_ids = torch.full((1, 1), mask_id, dtype=torch.long, device=device)
+
+    full_ids = torch.cat([input_ids, block_ids], dim=1)
+
+    with torch.no_grad():
+        out = model(full_ids)
+
+    pos = full_ids.shape[1] - 2
+    if pos < 0:
+        pos = 0
+    logit = out.logits[0, pos, :].float()
+    probs = F.softmax(logit, dim=-1).cpu().tolist()
+    return probs, mask_id
+
+
 def get_block_logits_llada(
     model, tokenizer, prompt: str, block_length: int, device: torch.device
 ) -> tuple[list[list[float]], int]:
@@ -207,6 +289,15 @@ def get_synthetic_logits(vocab_size: int, block_length: int, seed: int = 42) -> 
         probs = F.softmax(logits, dim=-1).tolist()
         prob_vectors.append(probs)
     return prob_vectors
+
+
+def get_synthetic_logits_for_position(
+    vocab_size: int, prefix_tokens: list[int], seed: int = 42
+) -> list[float]:
+    """One position for step-by-step mock. NFE=1 per call (simulated)."""
+    torch.manual_seed(seed + len(prefix_tokens))
+    logits = torch.randn(vocab_size)
+    return F.softmax(logits, dim=-1).tolist()
 
 
 def build_simple_json_dfa(vocab_size: int) -> tuple[object, int, set]:
