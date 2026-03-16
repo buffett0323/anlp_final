@@ -276,7 +276,7 @@ def main():
     output = buf.getvalue() + "\n[Done]\n"
     
     # Write to file for inspection
-    out_path = Path(__file__).parent.parent / "benchmark_results.txt"
+    out_path = Path(__file__).parent.parent / "results/benchmark_results.txt"
     out_path.write_text(output, encoding="utf-8")
     print(output + f"Results written to {out_path}", flush=True)
 

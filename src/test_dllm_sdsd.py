@@ -37,6 +37,26 @@ def get_device() -> tuple[torch.device, bool]:
 def load_dream_model(device: torch.device):
     """Load Dream-v0-Instruct-7B."""
     from transformers import AutoModel, AutoTokenizer
+    from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
+
+    # Dream uses rope_type="default" when rope_scaling is null, but ROPE_INIT_FUNCTIONS
+    # in newer transformers only has linear/dynamic/yarn/longrope/llama3. Add "default".
+    if "default" not in ROPE_INIT_FUNCTIONS:
+
+        def _compute_default_rope_parameters(config, device=None, seq_len=None, layer_type=None, **kwargs):
+            base = getattr(config, "rope_theta", 10000.0)
+            head_dim = getattr(config, "head_dim", None) or config.hidden_size // config.num_attention_heads
+            dim = int(head_dim * kwargs.get("partial_rotary_factor", 1.0))
+            inv_freq = 1.0 / (
+                base
+                ** (
+                    torch.arange(0, dim, 2, dtype=torch.int64).to(device=device, dtype=torch.float)
+                    / dim
+                )
+            )
+            return inv_freq, 1.0
+
+        ROPE_INIT_FUNCTIONS["default"] = _compute_default_rope_parameters
 
     model_path = "Dream-org/Dream-v0-Instruct-7B"
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
@@ -51,15 +71,44 @@ def load_dream_model(device: torch.device):
 def load_llada_model(device: torch.device):
     """Load LLaDA-8B-Instruct."""
     from transformers import AutoModel, AutoTokenizer
+    from transformers.modeling_utils import PreTrainedModel
 
     model_path = "GSAI-ML/LLaDA-8B-Instruct"
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-    model = AutoModel.from_pretrained(
-        model_path,
-        torch_dtype=torch.bfloat16,
-        trust_remote_code=True,
-    ).to(device).eval()
-    return model, tokenizer
+
+    # Compatibility for transformers 5.x only. With 4.38.2 (recommended for LLaDA), no patches needed.
+    needs_patch = hasattr(PreTrainedModel, "mark_tied_weights_as_initialized")
+    if needs_patch:
+        _orig_mark = PreTrainedModel.mark_tied_weights_as_initialized
+
+        def _patched_mark(self, loading_info):
+            if not hasattr(self, "all_tied_weights_keys"):
+                self.all_tied_weights_keys = getattr(self, "_tied_weights_keys", None) or {}
+            if not getattr(self, "_tie_weights_compat_patched", False):
+                _orig_tie = self.tie_weights
+
+                def _compat_tie(missing_keys=None, recompute_mapping=True):
+                    try:
+                        _orig_tie(missing_keys=missing_keys, recompute_mapping=recompute_mapping)
+                    except TypeError:
+                        _orig_tie()
+
+                self.tie_weights = _compat_tie
+                self._tie_weights_compat_patched = True
+            return _orig_mark(self, loading_info)
+
+        PreTrainedModel.mark_tied_weights_as_initialized = _patched_mark
+
+    try:
+        model = AutoModel.from_pretrained(
+            model_path,
+            torch_dtype=torch.bfloat16,
+            trust_remote_code=True,
+        ).to(device).eval()
+        return model, tokenizer
+    finally:
+        if needs_patch:
+            PreTrainedModel.mark_tied_weights_as_initialized = _orig_mark
 
 
 def get_block_logits_dream(
@@ -85,8 +134,8 @@ def get_block_logits_dream(
     full_ids = torch.cat([input_ids, block_ids], dim=1)
 
     if attention_mask is not None:
-        attn = torch.ones(1, full_ids.shape[1], device=device, dtype=torch.long)
-        attn[0, :prompt_len] = attention_mask[0]
+        attn = torch.ones(1, full_ids.shape[1], device=device, dtype=torch.bfloat16)
+        attn[0, :prompt_len] = attention_mask[0].to(torch.bfloat16)
     else:
         attn = None
 

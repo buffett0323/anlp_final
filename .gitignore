@@ -1,6 +1,7 @@
 papers/
 .DS_Store
 __pycache__/
+*/__pycache__/
 *.pyc
 *.pyo
 *.pyd
@@ -10,3 +11,5 @@ __pycache__/
 *.pyzw
 *.pyzwz
 *.pyzwzw
+
+.env
