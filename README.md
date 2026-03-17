@@ -122,6 +122,9 @@ git clone https://github.com/youtube/static-constraint-decoding.git
 
 # Constrained diffusion
 git clone https://github.com/eth-sri/constrained-diffusion.git
+
+# LAVE
+git clone https://github.com/zhangyitonggg/CD4dLLM.git
 ```
 
 ## References
