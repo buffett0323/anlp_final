@@ -6,6 +6,13 @@ for each transition cost computation. Used as the baseline for benchmarking
 against B2 (STATIC + DINGO) which achieves O(K) via sparse indexing.
 
 Reference: DINGO (Suresh et al., NeurIPS 2025) - Algorithm 1
+
+Paper alignment:
+  - Vi(q, q') = max_{t∈V} v_i(t) s.t. q ∈ δ(q', t)  [Eq. 3, Sec 3.1]
+    (max prob of transition from q' to q)
+  - W[i+1, q] = max_{q'} W[i, q'] × Vi(q, q')      [Eq. 4]
+  - Pr[i, q] stores (prev_state, token) for backtrack
+  - Convention: Vi[(q, q')] = Vi(dest, source) = transition q' → q
 """
 
 from __future__ import annotations
@@ -47,10 +54,10 @@ def compute_transition_costs_naive(
             best_prob = 0.0
             best_tok = -1
             
-            # O(N): Scan entire vocabulary
+            # O(N): Scan entire vocabulary for t s.t. δ(q', t) = q
             for t in range(vocab_size):
                 q_next = transition_fn(q_prime, t)
-                if q_next == q and q_next is not None:
+                if q_next == q:
                     prob = prob_vector[t] if t < len(prob_vector) else 0.0
                     if prob > best_prob:
                         best_prob = prob

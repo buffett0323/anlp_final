@@ -1,6 +1,10 @@
 """
 Herding for Constrained Decoding: Deterministic Path with Momentum
 
+Implements the time-dependent herding algorithm from:
+  Suzuki et al., "Deterministic Discrete Denoising" (ddd_herding.pdf)
+  Eqs. (9)-(10): x* = argmax_{x∈V} (w_t + p_t)ᵀ x,  w_{t+1} = w_t + p_t - x*
+
 When constraints force a token different from the model's top prediction (e.g.,
 grammar requires " but model wanted "password"), the probability mass is lost
 ("evaporated" by the sampling wall). Herding preserves this via a residual
@@ -37,16 +41,24 @@ def herding_decode(
     start_state: int,
     live_states: set[int],
     block_length: int | None = None,
+    delta: float = 0.0,
+    prev_token: int | None = None,
 ) -> HerdingResult:
     """
     Greedy constrained decoding with Herding momentum.
-    
+
+    Aligns with Suzuki et al. "Deterministic Discrete Denoising" (ddd_herding.pdf):
+      Eq. (9): x* = argmax_{x∈V} (w_t + p_t)ᵀ x
+      Eq. (10): w_{t+1} = w_t + p_t - x*
+    We restrict argmax to V_valid(q) for grammar-constrained decoding.
+
     At each step i:
-      score(t) = w_i[t] + p_i[t]   for t ∈ V_valid(q)
+      score(t) = w_i[t] + p_i[t] + (δ if t == prev_token else 0)   for t ∈ V_valid(q)
       t* = argmax score over valid t
       w_{i+1} = w_i + p_i - e_{t*}
       q_{i+1} = δ(q_i, t*)
-    
+
+    Optional delayed-switching (Eq. 11): delta > 0 favors prev_token to reduce switching.
     O(K) per step via CSR sparse lookup.
     """
     d = block_length if block_length is not None else len(prob_vectors)
@@ -81,6 +93,8 @@ def herding_decode(
         
         for t, q_next in transitions:
             score = w[t] + p[t]
+            if delta > 0 and prev_token is not None and t == prev_token:
+                score += delta
             if score > best_score:
                 best_score = score
                 best_t = t
@@ -94,8 +108,9 @@ def herding_decode(
             )
         
         tokens.append(best_t)
-        
-        # Herding update: w_new = w + p - e_{t*}
+        prev_token = best_t
+
+        # Herding update: w_new = w + p - e_{t*}  (Eq. 10)
         for j in range(vocab_size):
             w[j] = w[j] + p[j]
         w[best_t] -= 1.0
