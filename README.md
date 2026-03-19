@@ -149,6 +149,21 @@ cd src && python -m eval.intent_recovery
 
 Compares B2 vs Herding on recovery after perturbing a token. Herding recovers faster via momentum.
 
+## Debugging Unified Benchmark
+
+If SDSD produces garbage output while Dgrammar produces valid JSON:
+
+1. **Run argmax (Dgrammar-style) to isolate the issue:**
+   ```bash
+   python run_unified_benchmark.py --methods argmax --limit 5
+   ```
+   If argmax also produces garbage → prompt format or dataset mismatch.
+   If argmax produces valid JSON → bug is in our DINGO/Herding picker.
+
+2. **ETH checker (Syntactic/Functional):** Requires `vendor/CD4dLLM`. Aggregate merges instance data (schema, input, output) for validation. If checker fails to load, Syntactic/Functional will be 0.
+
+3. **Debug script:** `python debug_diffusion.py` compares Dgrammar vs SDSD on one instance (needs GPU + llguidance).
+
 ## Cloning Baseline Repos
 
 ```bash

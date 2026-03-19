@@ -1,13 +1,16 @@
 #!/bin/bash
-# Unified Benchmark: SDSD + Dgrammar + LAVE on JSON-Bench (jsonschema)
+# Unified Benchmark: SDSD + Dgrammar + LAVE + IG-CD on JSON-Bench (jsonschema)
 #
-# Produces Dgrammar-style table:
+# Produces Dgrammar-style table (same metrics as vendor/dgrammar/README.md):
 #   | Method | Syntactic | Functional | Mean Time | Median | P95 | Max | Constraint % |
+#
+# All on LLaDA-8B (diffusion model). All use diffusion (T=128).
+# Dgrammar/LAVE/IG-CD: their constraint at frontier. SDSD: our DINGO/Herding at frontier.
 #
 # Prerequisites:
 #   - GPU (A100 recommended)
-#   - vendor/CD4dLLM (for ETH checker)
-#   - vendor/dgrammar (for Dgrammar/LAVE)
+#   - vendor/CD4dLLM (for ETH checker: Syntactic/Functional)
+#   - vendor/dgrammar + constrained_diffusion (for Dgrammar/LAVE/IG-CD)
 #
 # Usage:
 #   bash run_unified_benchmark.sh              # Run all
@@ -26,11 +29,12 @@ if [ "$MODE" = "aggregate" ]; then
     exit 0
 fi
 
-# 1. Run SDSD methods (Baseline, Ablation1, Ablation2, Ablation3, SDSD)
+# 1. Run SDSD methods (our constraint: sdsd, ablation1-3; Dgrammar runs separately below)
 if [ "$MODE" = "all" ] || [ "$MODE" = "sdsd-only" ]; then
     echo "=== Running SDSD methods on jsonschema ==="
     python run_unified_benchmark.py \
-        --methods baseline,ablation1,ablation2,ablation3,sdsd \
+        --methods sdsd,ablation1,ablation2,ablation3 \
+        --skip-slow \
         --output results/unified
 fi
 
@@ -59,7 +63,19 @@ if [ "$MODE" = "all" ] && [ -d "vendor/dgrammar" ]; then
     ) || echo "  LAVE run skipped (check vendor/dgrammar setup)"
 fi
 
-# 4. Aggregate all results into comparison table
+# 4. Run IG-CD (constrained_decoding baseline, if vendor/dgrammar set up)
+if [ "$MODE" = "all" ] && [ -d "vendor/dgrammar" ]; then
+    echo "=== Running IG-CD (In-Graph Constrained Decoding) ==="
+    (
+        cd vendor/dgrammar
+        if [ -f ".venv/bin/activate" ]; then
+            source .venv/bin/activate
+        fi
+        python bench/run_igcd_timed.py 0 272 jsonschema 128 0 2>/dev/null || true
+    ) || echo "  IG-CD run skipped (check vendor/dgrammar setup)"
+fi
+
+# 5. Aggregate all results into comparison table
 echo ""
 echo "=== Aggregating results ==="
 python aggregate_unified_results.py results/unified vendor/dgrammar/results 2>/dev/null || \

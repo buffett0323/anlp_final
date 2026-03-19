@@ -26,12 +26,15 @@ from pathlib import Path
 
 # Method name mapping: filename tag -> display name
 METHOD_NAMES = {
+    "argmax": "Argmax (Dgrammar-style debug)",
     "baseline": "Baseline (DINGO O(N))",
+    "schema_guided": "Schema-Guided (llguidance)",
     "ablation1": "Ablation1 (STATIC+DINGO)",
     "ablation2": "Ablation2 (Herding)",
     "ablation3": "Ablation3 (Spec-Tree)",
     "sdsd": "SDSD (Ours)",
     "dgrammar": "Dgrammar",
+    "dgrammar_v2": "Dgrammar v2",
     "dgrammar_v2_async": "Dgrammar v2+async+AC4",
     "lave": "LAVE",
     "lave_timed": "LAVE",
@@ -58,7 +61,18 @@ def load_checker():
         return None
 
 
-def eval_results(check_fn, results: list[dict]) -> list[dict]:
+def load_instance_lookup():
+    """Load instance_id -> {schema, input, output} for checker."""
+    try:
+        from datasets import load_dataset
+        ds = load_dataset("eth-sri/json-mode-eval-extended", split="test")
+        return {row["instance_id"]: row for row in ds}
+    except Exception as e:
+        print(f"Warning: Could not load dataset for instance lookup: {e}")
+        return {}
+
+
+def eval_results(check_fn, results: list[dict], instance_lookup: dict = None) -> list[dict]:
     """Run ETH checker on each result. Add syntax_ok, passed_tests."""
     if not check_fn:
         for r in results:
@@ -66,9 +80,13 @@ def eval_results(check_fn, results: list[dict]) -> list[dict]:
             r["passed_tests"] = False
         return results
 
+    instance_lookup = instance_lookup or {}
     for r in results:
         try:
-            ev = check_fn(r, timeout=40)
+            # Merge instance data (schema, input, output) for checker
+            iid = r.get("instance_id", "")
+            merged = {**instance_lookup.get(iid, {}), **r}
+            ev = check_fn(merged, timeout=40)
             r["syntax_ok"] = ev.get("syntax_ok", False)
             r["passed_tests"] = ev.get("passed_tests", False)
         except Exception as e:
@@ -98,8 +116,12 @@ def load_result_files(results_dir: Path, method_filter: list[str] | None = None)
             # Infer method from filename
             name = f.stem.lower()
             method = "unknown"
-            if "sdsd_baseline" in name:
+            if "sdsd_argmax" in name:
+                method = "argmax"
+            elif "sdsd_baseline" in name:
                 method = "baseline"
+            elif "sdsd_schema_guided" in name:
+                method = "schema_guided"
             elif "sdsd_ablation1" in name:
                 method = "ablation1"
             elif "sdsd_ablation2" in name:
@@ -108,8 +130,10 @@ def load_result_files(results_dir: Path, method_filter: list[str] | None = None)
                 method = "ablation3"
             elif "sdsd_sdsd" in name:
                 method = "sdsd"
-            elif ("v2_async" in name or "dgrammar" in name) and "lave" not in name:
+            elif ("v2_async" in name or "ac4" in name) and "lave" not in name:
                 method = "dgrammar_v2_async"
+            elif ("v2_timed" in name or "dgrammar" in name) and "lave" not in name:
+                method = "dgrammar_v2"
             elif "lave" in name:
                 method = "lave_timed"
             elif "igcd" in name:
@@ -155,13 +179,13 @@ def load_result_files(results_dir: Path, method_filter: list[str] | None = None)
     return method_results
 
 
-def compute_stats(results: list[dict], check_fn) -> dict:
+def compute_stats(results: list[dict], check_fn, instance_lookup: dict = None) -> dict:
     """Compute Syntactic, Functional, Mean Time, Median, P95, Max, Constraint %."""
     if not results:
         return {}
 
     # Run eval if we have checker
-    results = eval_results(check_fn, list(results))
+    results = eval_results(check_fn, list(results), instance_lookup)
 
     n = len(results)
     syntax_ok = sum(1 for r in results if r.get("syntax_ok", False))
@@ -202,9 +226,10 @@ def compute_stats(results: list[dict], check_fn) -> dict:
 
 
 def print_table(stats: dict[str, dict]):
-    """Print Dgrammar-style comparison table."""
+    """Print Dgrammar-style comparison table (same metrics as vendor/dgrammar/README.md)."""
     print("\n" + "=" * 120)
-    print("  Unified Benchmark — JSON-Bench (jsonschema), LLaDA-8B-Instruct, T=128, L=256")
+    print("  Unified Benchmark — JSON-Bench (272 instances), LLaDA-8B-Instruct")
+    print("  SDSD: AR (256 forwards) | Dgrammar/LAVE/IG-CD: Diffusion T=128")
     print("=" * 120)
     print(f"{'Method':<28} {'Syntactic':<12} {'Functional':<12} {'Mean Time':<12} {'Median':<12} {'P95':<12} {'Max':<12} {'Constraint %':<12}")
     print("-" * 120)
@@ -238,6 +263,9 @@ def main():
     check_fn = load_checker()
     if not check_fn:
         print("ETH checker not found. Syntactic/Functional will be 0. Install vendor/CD4dLLM or vendor/dgrammar.")
+    instance_lookup = load_instance_lookup()
+    if instance_lookup:
+        print(f"Instance lookup: {len(instance_lookup)} instances for checker")
 
     all_results: dict[str, list[dict]] = {}
     for results_dir in results_dirs:
@@ -272,7 +300,7 @@ def main():
     stats = {}
     for method, results in all_results.items():
         print(f"  {method}: {len(results)} instances")
-        stats[method] = compute_stats(results, check_fn)
+        stats[method] = compute_stats(results, check_fn, instance_lookup)
 
     print_table(stats)
 
