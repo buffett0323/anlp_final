@@ -69,7 +69,8 @@ def test_bidirectional_gap_dingo():
         [],
         live,
     )
-    assert seg.success and seg.tokens == [0, 1] and abs(seg.probability - 1.0) < 1e-9
+    # ``tokens`` lists only mask columns (fixed segments are taken from ``x``).
+    assert seg.success and seg.tokens == [1] and abs(seg.probability - 1.0) < 1e-9
     print(f"  segmented fixed+mask: tokens={seg.tokens}")
 
     print("  ✓ Bidirectional gap DINGO OK\n")

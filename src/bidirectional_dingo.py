@@ -16,7 +16,7 @@ import math
 from typing import Any, Literal, TypedDict
 
 from csr_dfa import CSRTransitionMatrix
-from sparse_dingo import DINGOResult, compute_transition_costs_sparse, sparse_dingo_dp
+from sparse_dingo import DINGOResult, sparse_dingo_dp
 
 _CACHE_ATTR = "_bidi_suffix_compat_cache"
 
@@ -121,6 +121,50 @@ def _log_p(p: float) -> float:
     return math.log(p) if p > 0.0 else float("-inf")
 
 
+def _mask_step_sparse_forward(
+    csr: CSRTransitionMatrix,
+    w: dict[int, float],
+    pv: list[float],
+    neg_inf: float,
+) -> tuple[dict[int, float], dict[int, tuple[int | None, int | None]]]:
+    """One mask column: O(|reachable| × K) forward update."""
+    w_new: dict[int, float] = {}
+    row: dict[int, tuple[int | None, int | None]] = {}
+    for q_old, sc in w.items():
+        if sc == neg_inf:
+            continue
+        for tok, q_next in csr.get_transitions(q_old):
+            if tok < 0:
+                continue
+            lp = _log_p(pv[tok]) if tok < len(pv) else neg_inf
+            cand = sc + lp
+            if cand > w_new.get(q_next, neg_inf):
+                w_new[q_next] = cand
+                row[q_next] = (q_old, tok)
+    return w_new, row
+
+
+def _fixed_step_sparse_forward(
+    csr: CSRTransitionMatrix,
+    w: dict[int, float],
+    t: int,
+    neg_inf: float,
+) -> tuple[dict[int, float], dict[int, tuple[int | None, int | None]]]:
+    """One fixed token: deterministic transition from each reachable state."""
+    w_new: dict[int, float] = {}
+    row: dict[int, tuple[int | None, int | None]] = {}
+    for q_old, sc in w.items():
+        if sc == neg_inf:
+            continue
+        nxt = _dfa_step(csr, q_old, t)
+        if nxt is None:
+            continue
+        if sc > w_new.get(nxt, neg_inf):
+            w_new[nxt] = sc
+            row[nxt] = (q_old, t)
+    return w_new, row
+
+
 class FixedSeg(TypedDict):
     type: Literal["fixed"]
     tokens: list[int]
@@ -147,6 +191,9 @@ def segmented_bidirectional_dingo(
     Each ``fixed`` segment advances the DFA deterministically (log mass unchanged).
     Each ``mask`` segment uses the same max-product token choice as
     ``sparse_dingo_dp`` for every mask column in ``probs``.
+
+    ``DINGOResult.tokens`` contains **only** mask-column tokens (in order), not
+    the fixed tokens (callers already know fixed spans from the sequence).
     """
     if not suffix_tokens:
         terminal = live_states
@@ -178,72 +225,46 @@ def segmented_bidirectional_dingo(
             success=ok,
         )
 
-    nq = csr.num_states
     neg_inf = float("-inf")
-    w: list[float] = [neg_inf] * nq
-    w[q_start] = 0.0
-    pr: list[list[tuple[int | None, int | None]]] = []
+    w: dict[int, float] = {q_start: 0.0}
+    pr: list[dict[int, tuple[int | None, int | None]]] = []
 
-    vocab_size = csr.vocab_size
     for kind, payload in flat:
         if kind == "fixed":
             t = int(payload)
-            w_new = [neg_inf] * nq
-            row: list[tuple[int | None, int | None]] = [(None, None)] * nq
-            for q_old in range(nq):
-                if w[q_old] == neg_inf:
-                    continue
-                nxt = _dfa_step(csr, q_old, t)
-                if nxt is None:
-                    continue
-                if w[q_old] > w_new[nxt]:
-                    w_new[nxt] = w[q_old]
-                    row[nxt] = (q_old, t)
-            w = w_new
+            w, row = _fixed_step_sparse_forward(csr, w, t, neg_inf)
             pr.append(row)
         else:
             pv: list[float] = payload
-            Vi, Ti = compute_transition_costs_sparse(csr, pv, max(len(pv), vocab_size))
-            w_new = [neg_inf] * nq
-            row = [(None, None)] * nq
-            for q in range(nq):
-                best = neg_inf
-                best_prev: tuple[int | None, int | None] = (None, None)
-                for q_prime in range(nq):
-                    key = (q, q_prime)
-                    if key not in Vi:
-                        continue
-                    prev = w[q_prime]
-                    if prev == neg_inf:
-                        continue
-                    cand = prev + _log_p(Vi[key])
-                    if cand > best:
-                        best = cand
-                        best_prev = (q_prime, Ti[key])
-                w_new[q] = best
-                row[q] = best_prev
-            w = w_new
+            w, row = _mask_step_sparse_forward(csr, w, pv, neg_inf)
             pr.append(row)
+
+    if not w:
+        return DINGOResult(tokens=[], final_state=q_start, probability=0.0, success=False)
 
     max_log = neg_inf
     q_max = -1
     for q in terminal:
-        if 0 <= q < nq and w[q] > max_log:
-            max_log = w[q]
+        lv = w.get(q, neg_inf)
+        if lv > max_log:
+            max_log = lv
             q_max = q
 
     if q_max < 0 or not math.isfinite(max_log):
         return DINGOResult(tokens=[], final_state=q_start, probability=0.0, success=False)
 
+    # Only mask positions (same contract as ``sparse_dingo_dp`` / ``bidirectional_gap_dingo``).
     tokens: list[int] = []
     q_curr = q_max
-    for row in reversed(pr):
-        prev_q, tok = row[q_curr]
-        if prev_q is None:
-            continue
-        if tok is not None:
+    for step_idx in range(len(pr) - 1, -1, -1):
+        row = pr[step_idx]
+        kind, _ = flat[step_idx]
+        prev_q, tok = row.get(q_curr, (None, None))
+        if prev_q is None and tok is None:
+            return DINGOResult(tokens=[], final_state=q_start, probability=0.0, success=False)
+        if kind == "mask" and tok is not None:
             tokens.append(tok)
-        q_curr = prev_q
+        q_curr = prev_q if prev_q is not None else q_curr
     tokens.reverse()
 
     mask_final = q_max

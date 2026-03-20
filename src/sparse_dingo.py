@@ -85,8 +85,9 @@ def sparse_dingo_dp(
     initial_log_probs: dict[int, float] | None = None,
 ) -> DINGOResult:
     """
-    DINGO Dynamic Programming with O(K) sparse transition cost computation.
-    
+    DINGO Dynamic Programming: forward pass is O(|reachable| × K) per mask step
+    (iterate outgoing transitions from each reachable state), not O(|Q|²).
+
     Args:
         csr: CSR format DFA (STATIC sparse indexing)
         prob_vectors: v_1, ..., v_d - probability vectors at each position
@@ -94,71 +95,55 @@ def sparse_dingo_dp(
         live_states: Ql - states that can reach accepting states
         block_length: d (default: len(prob_vectors))
         initial_log_probs: optional log π0(q); if set, overrides single-state init
-    
+
     Returns:
         DINGOResult with optimal token sequence
     """
     d = block_length if block_length is not None else len(prob_vectors)
     if d == 0:
         return DINGOResult(tokens=[], final_state=start_state, probability=1.0, success=True)
-    
-    vocab_size = len(prob_vectors[0]) if prob_vectors else csr.vocab_size
-    
-    # W[i, q] = max log-probability to reach state q in i steps (natural log)
-    neg_inf = float("-inf")
-    W: dict[tuple[int, int], float] = {}
-    Pr: dict[tuple[int, int], tuple[int | None, int | None]] = {}
 
-    for q in range(csr.num_states):
-        W[(0, q)] = neg_inf
-        Pr[(0, q)] = (None, None)
+    neg_inf = float("-inf")
     if initial_log_probs is not None:
+        W: dict[int, float] = {}
         for q, lv in initial_log_probs.items():
             if 0 <= q < csr.num_states and math.isfinite(lv):
-                W[(0, q)] = max(W[(0, q)], lv)
+                W[q] = max(W.get(q, neg_inf), lv)
     else:
-        W[(0, start_state)] = 0.0
-    
-    # Precompute transition costs for each position (O(d * |Q| * K) total)
-    all_Vi: list[dict[tuple[int, int], float]] = []
-    all_Ti: list[dict[tuple[int, int], int]] = []
-    
-    for i in range(d):
-        Vi, Ti = compute_transition_costs_sparse(
-            csr, prob_vectors[i], vocab_size
-        )
-        all_Vi.append(Vi)
-        all_Ti.append(Ti)
-    
-    # DP forward pass
-    for i in range(1, d + 1):
-        Vi = all_Vi[i - 1]
-        Ti = all_Ti[i - 1]
-        
-        for q in range(csr.num_states):
-            best_val = neg_inf
-            best_prev: tuple[int | None, int | None] = (None, None)
+        W = {start_state: 0.0}
 
-            for q_prime in range(csr.num_states):
-                key = (q, q_prime)
-                if key not in Vi:
+    pr_rows: list[dict[int, tuple[int | None, int | None]]] = []
+
+    for i in range(d):
+        pv = prob_vectors[i]
+        W_new: dict[int, float] = {}
+        row: dict[int, tuple[int | None, int | None]] = {}
+        for q_prev, score in W.items():
+            if score == neg_inf:
+                continue
+            for tok, q_next in csr.get_transitions(q_prev):
+                if tok < 0:
                     continue
-                prev_log = W.get((i - 1, q_prime), neg_inf)
-                if prev_log == neg_inf:
-                    continue
-                cand = prev_log + _log_prob(Vi[key])
-                if cand > best_val:
-                    best_val = cand
-                    best_prev = (q_prime, Ti[key])
-            
-            W[(i, q)] = best_val
-            Pr[(i, q)] = best_prev
-    
-    # Find best live state
+                lp = _log_prob(pv[tok]) if tok < len(pv) else neg_inf
+                cand = score + lp
+                if cand > W_new.get(q_next, neg_inf):
+                    W_new[q_next] = cand
+                    row[q_next] = (q_prev, tok)
+        W = W_new
+        pr_rows.append(row)
+
+    if not W:
+        return DINGOResult(
+            tokens=[],
+            final_state=start_state,
+            probability=0.0,
+            success=False,
+        )
+
     q_max = -1
     max_log = neg_inf
     for q in live_states:
-        lv = W.get((d, q), neg_inf)
+        lv = W.get(q, neg_inf)
         if lv > max_log:
             max_log = lv
             q_max = q
@@ -170,16 +155,22 @@ def sparse_dingo_dp(
             probability=0.0,
             success=False,
         )
-    
-    # Backtrack to get optimal sequence
+
     tokens: list[int] = []
     q_curr = q_max
-    for i in range(d, 0, -1):
-        q_prev, t = Pr[(i, q_curr)]
+    for row in reversed(pr_rows):
+        prev_q, t = row.get(q_curr, (None, None))
+        if prev_q is None and t is None:
+            return DINGOResult(
+                tokens=[],
+                final_state=start_state,
+                probability=0.0,
+                success=False,
+            )
         if t is not None:
             tokens.append(t)
-        q_curr = q_prev if q_prev is not None else q_curr
-    
+        q_curr = prev_q if prev_q is not None else q_curr
+
     tokens.reverse()
     return DINGOResult(
         tokens=tokens,

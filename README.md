@@ -96,16 +96,18 @@ See [docs/ablation.md](docs/ablation.md) for full design and results (Dream-7B, 
 
 1. **`llguidance>=1.6`**: `pip install 'llguidance>=1.6'` (included in `uv sync` / project deps).
 2. **dgrammar** on the import path — pick one:
-   - Clone [dgrammar](https://github.com/guan404ming/dgrammar) to `vendor/dgrammar` under this repo, **or**
-   - `pip install -e /path/to/dgrammar`, **or**
-   - `export DGRAMMAR_PATH=/path/to/dgrammar` (repo root: the folder that contains the `dgrammar/` package directory).
+  - Clone [dgrammar](https://github.com/guan404ming/dgrammar) to `vendor/dgrammar` under this repo, **or**
+  - `pip install -e /path/to/dgrammar`, **or**
+  - `export DGRAMMAR_PATH=/path/to/dgrammar` (repo root: the folder that contains the `dgrammar/` package directory).
 
 Without both, `run_unified_benchmark.py` exits with “No methods to run”.
 
 Compare Baseline, Ablations, SDSD, Dgrammar, and LAVE on JSON-Bench (jsonschema) with Dgrammar-style metrics:
 
+
 | Method | Syntactic | Functional | Mean Time | Median | P95 | Max | Constraint % |
-|--------|-----------|------------|-----------|--------|-----|-----|--------------|
+| ------ | --------- | ---------- | --------- | ------ | --- | --- | ------------ |
+
 
 ```bash
 # Run SDSD methods only (Baseline, Ablation1, Ablation2, Ablation3, SDSD)
@@ -124,19 +126,18 @@ python aggregate_unified_results.py results/unified vendor/dgrammar/results
 bash run_unified_benchmark.sh
 
 # SDSD/BiDi vs LAVE — same LLaDA + JSON-Bench + diffusion steps (documented knobs)
-python run_lave_sdsd_compare.py --methods sdsd,bidi --limit 20 --output results/lave_sdsd_compare
-python run_lave_sdsd_compare.py --methods sdsd,bidi --limit 272 --run-lave --aggregate   # needs vendor/dgrammar
+python run_lave_sdsd_compare.py --methods bidi --limit 20 --output results/lave_sdsd_compare
+# With --aggregate: prints README-style markdown table + writes unified_comparison.md next to JSONL
+python run_lave_sdsd_compare.py --methods bidi --limit 20 --run-lave --aggregate --output results/lave_sdsd_compare   # needs vendor/dgrammar
 ```
 
 See [docs/lave_sdsd_compare.md](docs/lave_sdsd_compare.md) for aligned config and prerequisites.
 
-**Output**: `results/unified/unified_comparison.json` and printed table. Requires `vendor/CD4dLLM` for ETH syntactic/functional evaluation. See [docs/experiment_comparison.md](docs/experiment_comparison.md) for metric definitions.
+**Output**: `unified_comparison.json`, **`unified_comparison.md`** (same columns as the table above), and printed ASCII + markdown tables when using `aggregate_unified_results.py` or `run_lave_sdsd_compare.py --aggregate`. Requires `vendor/CD4dLLM` for ETH syntactic/functional evaluation. See [docs/experiment_comparison.md](docs/experiment_comparison.md) for metric definitions.
 
 ## Dataset
 
 JSON-Mode-Eval is loaded automatically from Hugging Face. See [docs/download_data.md](docs/download_data.md) for other datasets.
-
-
 
 ## Run Tests
 
@@ -173,16 +174,13 @@ Compares B2 vs Herding on recovery after perturbing a token. Herding recovers fa
 If SDSD produces garbage output while Dgrammar produces valid JSON:
 
 1. **Run argmax (Dgrammar-style) to isolate the issue:**
-   ```bash
+  ```bash
    python run_unified_benchmark.py --methods argmax --limit 5
-   ```
+  ```
    If argmax also produces garbage → prompt format or dataset mismatch.
    If argmax produces valid JSON → bug is in our DINGO/Herding picker.
-
 2. **ETH checker (Syntactic/Functional):** Requires `vendor/CD4dLLM`. Aggregate merges instance data (schema, input, output) for validation. If checker fails to load, Syntactic/Functional will be 0.
-
 3. **Debug script:** `python debug_diffusion.py` compares Dgrammar vs SDSD on one instance (needs GPU + llguidance).
-
 4. **ablation2 (Herding) in diffusion:** Uses a single `HerdingMomentumState` per instance so `w` persists across all frontier picks and violator retries within `generate_diffusion_sdsd` (not reset each step).
 
 ## Cloning Baseline Repos

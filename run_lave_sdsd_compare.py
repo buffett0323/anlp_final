@@ -15,10 +15,10 @@ Examples::
     # Ours only (writes JSONL under results/lave_sdsd_compare)
     python run_lave_sdsd_compare.py --methods sdsd,bidi --limit 20
 
-    # Ours + LAVE (needs vendor/dgrammar checkout) + aggregate table
+    # Ours + LAVE + README-style table (markdown printed + saved by aggregate)
     python run_lave_sdsd_compare.py --methods sdsd,bidi --limit 272 --run-lave --aggregate
 
-    # Table from existing dirs
+    # Table from existing dirs (prints ASCII + markdown; writes unified_comparison.md)
     python run_lave_sdsd_compare.py --aggregate-only \\
         --our-results results/lave_sdsd_compare \\
         --lave-results vendor/dgrammar/results
@@ -37,6 +37,17 @@ ROOT = Path(__file__).resolve().parent
 DEFAULT_STEPS = 128
 DEFAULT_BLOCK = 32
 DEFAULT_GEN = 256
+
+
+def _hint_readme_table(results_dir: Path) -> None:
+    """Point to markdown table after aggregate (stdout + unified_comparison.md)."""
+    md = results_dir / "unified_comparison.md"
+    if md.is_file():
+        print(
+            f"\n=== README-style comparison table ===\n"
+            f"  • Markdown block printed above by aggregate_unified_results.py\n"
+            f"  • Copy-paste file: {md}\n"
+        )
 
 
 def _print_shared_config(
@@ -158,7 +169,10 @@ def main() -> int:
     p.add_argument(
         "--aggregate",
         action="store_true",
-        help="After runs, call aggregate_unified_results.py on our dir + vendor LAVE results",
+        help=(
+            "After runs, call aggregate_unified_results.py on our dir + vendor LAVE results "
+            "(prints README-style markdown table + saves unified_comparison.md)"
+        ),
     )
     p.add_argument(
         "--aggregate-only",
@@ -202,7 +216,10 @@ def main() -> int:
         if not lave_r.is_absolute():
             lave_r = ROOT / lave_r
         lave_r = lave_r.resolve()
-        return _run_aggregate(our, lave_r if lave_r.is_dir() else None)
+        ar = _run_aggregate(our, lave_r if lave_r.is_dir() else None)
+        if ar == 0:
+            _hint_readme_table(our)
+        return ar
 
     rc = 0
     if not args.skip_ours:
@@ -222,10 +239,13 @@ def main() -> int:
         ar = _run_aggregate(out_dir, lave_dir if lave_dir.is_dir() else None)
         if ar != 0 and rc == 0:
             rc = ar
+        elif ar == 0:
+            _hint_readme_table(out_dir)
 
     print(f"\nDone. Our JSONL: {out_dir}")
     if args.aggregate:
         print(f"Comparison JSON: {out_dir / 'unified_comparison.json'}")
+        print(f"Comparison MD:   {out_dir / 'unified_comparison.md'}")
     return rc
 
 

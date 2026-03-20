@@ -250,6 +250,46 @@ def print_table(stats: dict[str, dict]):
     print("=" * 120 + "\n")
 
 
+def _md_cell(s: str) -> str:
+    """Escape pipe for markdown table cells."""
+    return s.replace("|", "\\|")
+
+
+def format_markdown_table(stats: dict[str, dict]) -> str:
+    """README-style markdown table (same columns as ``print_table``)."""
+    if not stats:
+        return ""
+    lines = [
+        "| Method | Syntactic | Functional | Mean Time | Median | P95 | Max | Constraint % |",
+        "| ------ | --------- | ---------- | --------- | ------ | --- | --- | ------------ |",
+    ]
+    for method, s in sorted(stats.items(), key=lambda x: -x[1].get("syntactic", 0)):
+        syn = s.get("syntactic", 0)
+        func = s.get("functional", 0)
+        mean_t = s.get("mean_time", 0)
+        med_t = s.get("median_time", 0)
+        p95_t = s.get("p95_time", 0)
+        max_t = s.get("max_time", 0)
+        cp = s.get("constraint_pct", 0)
+        func_str = f"{func:.1f}%" if func > 0 else "-"
+        row = (
+            f"| {_md_cell(method)} | {syn:.1f}% | {func_str} | {mean_t:.2f}s | {med_t:.2f}s | "
+            f"{p95_t:.2f}s | {max_t:.2f}s | {cp:.1f}% |"
+        )
+        lines.append(row)
+    return "\n".join(lines)
+
+
+def print_markdown_table(stats: dict[str, dict]) -> None:
+    """Print Dgrammar-style comparison table as GitHub-flavored markdown."""
+    md = format_markdown_table(stats)
+    if not md:
+        return
+    print("\n### Unified benchmark — comparison table (markdown)\n")
+    print(md)
+    print()
+
+
 def main():
     base = Path(__file__).resolve().parent
     # Accept multiple result dirs: aggregate_unified_results.py [dir1] [dir2] ...
@@ -306,6 +346,7 @@ def main():
         stats[method] = compute_stats(results, check_fn, instance_lookup)
 
     print_table(stats)
+    print_markdown_table(stats)
 
     # Save to JSON
     out_dir = results_dirs[0] if results_dirs else base / "results" / "unified"
@@ -314,6 +355,19 @@ def main():
     with open(out_file, "w") as f:
         json.dump(stats, f, indent=2)
     print(f"Saved to {out_file}")
+
+    md_file = out_dir / "unified_comparison.md"
+    md_body = format_markdown_table(stats)
+    if md_body:
+        with open(md_file, "w", encoding="utf-8") as f:
+            f.write("# Unified benchmark — comparison table\n\n")
+            f.write(
+                "Same metrics as README (JSON-Bench / LLaDA-8B): "
+                "Syntactic, Functional, Mean Time, Median, P95, Max, Constraint %.\n\n"
+            )
+            f.write(md_body)
+            f.write("\n")
+        print(f"Markdown table saved to {md_file}")
 
     return 0
 

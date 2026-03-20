@@ -22,7 +22,12 @@ ensure_dgrammar_path()
 from dgrammar.checker import TokenChecker
 from dgrammar.generate import add_gumbel_noise, get_num_transfer_tokens, extend_prefix
 
-from bidirectional_dingo import bidirectional_gap_dingo, dfa_run
+from bidirectional_dingo import (
+    FixedSeg,
+    MaskSeg,
+    dfa_run,
+    segmented_bidirectional_dingo,
+)
 from csr_dfa import CSRTransitionMatrix, build_csr_from_transition_dict
 from sparse_dingo import sparse_dingo_dp
 from herding import HerdingMomentumState, herding_single_constrained_step
@@ -65,6 +70,47 @@ def _clear_bidi_gap_ctx(ctx: dict[str, Any] | None) -> None:
     ctx.pop("bidi_positions", None)
 
 
+def _build_bidi_segments_from_x(
+    x: torch.Tensor,
+    focus_pos: int,
+    seq_len: int,
+    mask_id: int,
+    logits_seq: torch.Tensor,
+    vocab_size: int,
+    max_masks: int,
+) -> tuple[list[FixedSeg | MaskSeg], list[int], int]:
+    """
+    From ``focus_pos``, walk right: alternating mask columns and fixed-token
+    runs until ``max_masks`` mask positions are collected or sequence ends.
+
+    Returns (segments, mask_positions in order, pos_after_region) for suffix.
+    """
+    segments: list[FixedSeg | MaskSeg] = []
+    mask_positions: list[int] = []
+    pos = focus_pos
+    mask_count = 0
+    while pos < seq_len and mask_count < max_masks:
+        tid = int(x[0, pos].item())
+        if tid == mask_id:
+            segments.append(
+                {
+                    "type": "mask",
+                    "probs": [_logits_to_prob_list(logits_seq[pos], vocab_size)],
+                }
+            )
+            mask_positions.append(pos)
+            mask_count += 1
+            pos += 1
+        else:
+            fixed: list[int] = []
+            while pos < seq_len and int(x[0, pos].item()) != mask_id:
+                fixed.append(int(x[0, pos].item()))
+                pos += 1
+            if fixed:
+                segments.append({"type": "fixed", "tokens": fixed})
+    return segments, mask_positions, pos
+
+
 def _bidirectional_frontier_pick(
     logits_1d: torch.Tensor,
     checker: TokenChecker,
@@ -72,10 +118,10 @@ def _bidirectional_frontier_pick(
     ctx: dict[str, Any],
 ) -> int:
     """
-    Multi-mask gap Viterbi on JSON DFA + fixed right suffix; schema-check the
-    proposed chunk, then return first token (approximate CFG via DFA + verify).
+    Segmented gap Viterbi (scattered masks + fixed runs) on JSON DFA + fixed
+    right suffix; schema-check the proposed chunk, then return first mask token.
 
-    On success, stores the full optimal gap in ``ctx`` (``bidi_tokens``,
+    On success, stores the full optimal mask sequence in ``ctx`` (``bidi_tokens``,
     ``bidi_positions``) so the diffusion loop can commit every mask in the gap.
     """
     x = ctx["x"]
@@ -92,15 +138,15 @@ def _bidirectional_frontier_pick(
         _clear_bidi_gap_ctx(ctx)
         return _frontier_picker_base(logits_1d, checker, vocab_size, sparse_dingo_dp)
 
-    k = 0
-    p = focus_pos
-    while p < seq_len and int(x[0, p].item()) == mask_id:
-        k += 1
-        p += 1
-    k = min(k, MAX_BIDI_GAP)
+    segments, mask_positions, pos_after = _build_bidi_segments_from_x(
+        x, focus_pos, seq_len, mask_id, logits_seq, vocab_size, MAX_BIDI_GAP
+    )
+    if not segments or not mask_positions:
+        _clear_bidi_gap_ctx(ctx)
+        return _frontier_picker_base(logits_1d, checker, vocab_size, sparse_dingo_dp)
 
     suffix: list[int] = []
-    q = focus_pos + k
+    q = pos_after
     while q < seq_len:
         tid = int(x[0, q].item())
         if tid == mask_id:
@@ -114,19 +160,12 @@ def _bidirectional_frontier_pick(
         _clear_bidi_gap_ctx(ctx)
         return _frontier_picker_base(logits_1d, checker, vocab_size, sparse_dingo_dp)
 
-    prob_vectors: list[list[float]] = []
-    for j in range(k):
-        pos = focus_pos + j
-        if pos >= seq_len:
-            break
-        prob_vectors.append(_logits_to_prob_list(logits_seq[pos], vocab_size))
-
-    if len(prob_vectors) != k:
+    res = segmented_bidirectional_dingo(csr, q_left, segments, suffix, live_states)
+    if not res.success or not res.tokens:
         _clear_bidi_gap_ctx(ctx)
         return _frontier_picker_base(logits_1d, checker, vocab_size, sparse_dingo_dp)
 
-    res = bidirectional_gap_dingo(csr, q_left, prob_vectors, suffix, live_states)
-    if not res.success or not res.tokens:
+    if len(res.tokens) != len(mask_positions):
         _clear_bidi_gap_ctx(ctx)
         return _frontier_picker_base(logits_1d, checker, vocab_size, sparse_dingo_dp)
 
@@ -137,7 +176,7 @@ def _bidirectional_frontier_pick(
         return _frontier_picker_base(logits_1d, checker, vocab_size, sparse_dingo_dp)
 
     ctx["bidi_tokens"] = res.tokens
-    ctx["bidi_positions"] = list(range(focus_pos, focus_pos + len(res.tokens)))
+    ctx["bidi_positions"] = mask_positions
     return first
 
 
@@ -451,11 +490,13 @@ def generate_diffusion_sdsd(
                         tok = torch.argmax(logits_with_noise[0, consume_idx]).item()
                     x0[0, consume_idx] = tok
                     if bidi_ctx is not None and bidi_ctx.get("bidi_tokens"):
-                        if mask_index[0, consume_idx]:
-                            x0_p[0, consume_idx] = 1.0
-                        focus = consume_idx
-                        for rel_pos, gap_tok in enumerate(bidi_ctx["bidi_tokens"][1:], start=1):
-                            abs_pos = focus + rel_pos
+                        pos_list = bidi_ctx.get("bidi_positions") or list(
+                            range(
+                                consume_idx,
+                                consume_idx + len(bidi_ctx["bidi_tokens"]),
+                            )
+                        )
+                        for abs_pos, gap_tok in zip(pos_list, bidi_ctx["bidi_tokens"]):
                             if abs_pos < x.shape[1] and mask_index[0, abs_pos]:
                                 x0[0, abs_pos] = gap_tok
                                 x0_p[0, abs_pos] = 1.0
