@@ -3,10 +3,10 @@ name = "sdsd"
 version = "0.1.0"
 description = "Sparse Deterministic Speculative Decoding"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "datasets>=4.5.0",
-    "llguidance>=1.3.0",
+    "llguidance>=1.6",
     "nvitop>=1.6.2",
     "torch>=2.8.0",
     "tqdm>=4.67.3",

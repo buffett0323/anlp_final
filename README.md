@@ -92,6 +92,16 @@ See [docs/ablation.md](docs/ablation.md) for full design and results (Dream-7B, 
 
 ## Unified Benchmark (SDSD vs Dgrammar vs LAVE)
 
+**Prerequisites:** SDSD diffusion uses `dgrammar.checker.TokenChecker` (same stack as Dgrammar). You need:
+
+1. **`llguidance>=1.6`**: `pip install 'llguidance>=1.6'` (included in `uv sync` / project deps).
+2. **dgrammar** on the import path — pick one:
+   - Clone [dgrammar](https://github.com/guan404ming/dgrammar) to `vendor/dgrammar` under this repo, **or**
+   - `pip install -e /path/to/dgrammar`, **or**
+   - `export DGRAMMAR_PATH=/path/to/dgrammar` (repo root: the folder that contains the `dgrammar/` package directory).
+
+Without both, `run_unified_benchmark.py` exits with “No methods to run”.
+
 Compare Baseline, Ablations, SDSD, Dgrammar, and LAVE on JSON-Bench (jsonschema) with Dgrammar-style metrics:
 
 | Method | Syntactic | Functional | Mean Time | Median | P95 | Max | Constraint % |

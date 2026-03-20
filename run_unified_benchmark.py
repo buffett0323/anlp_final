@@ -29,10 +29,12 @@ if "--mock" in sys.argv:
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
-# For schema_guided: TokenChecker from vendor/dgrammar (requires llguidance)
-_vendor_dgrammar = Path(__file__).resolve().parent / "vendor" / "dgrammar"
-if _vendor_dgrammar.exists():
-    sys.path.insert(0, str(_vendor_dgrammar))
+from dgrammar_import import dgrammar_available
+
+# For SDSD diffusion + schema_guided: dgrammar (TokenChecker) + llguidance>=1.6
+_SCHEMA_GUIDED_AVAILABLE = dgrammar_available()
+if _SCHEMA_GUIDED_AVAILABLE:
+    from dgrammar.checker import TokenChecker
 
 from baseline_dingo import baseline_dingo_dp
 from sparse_dingo import sparse_dingo_dp
@@ -51,15 +53,6 @@ from test_dllm_sdsd import (
 GEN_LENGTH = 256
 DRAFT_LENGTH = 32
 WARMUP = 5
-
-# schema_guided (AR + llguidance) requires vendor/dgrammar
-_SCHEMA_GUIDED_AVAILABLE = False
-try:
-    from dgrammar.checker import TokenChecker
-    _SCHEMA_GUIDED_AVAILABLE = True
-except ImportError:
-    pass
-
 
 def load_jsonschema_dataset(limit: int | None = None):
     """Load eth-sri/json-mode-eval-extended (JSON-Bench)."""
@@ -416,16 +409,27 @@ def main():
             print(f"Skipping slow methods: {SLOW_METHODS}")
 
     if "schema_guided" in methods and not _SCHEMA_GUIDED_AVAILABLE:
-        print("schema_guided requires llguidance. Install: pip install llguidance>=1.6")
+        print(
+            "schema_guided needs the dgrammar package + llguidance>=1.6.\n"
+            "  pip install 'llguidance>=1.6'\n"
+            "  Clone dgrammar into vendor/dgrammar, or: pip install -e /path/to/dgrammar, or: export DGRAMMAR_PATH=/path/to/dgrammar"
+        )
         methods = [m for m in methods if m != "schema_guided"]
 
     diffusion_methods = {"sdsd", "ablation1", "ablation2", "ablation3", "baseline", "argmax", "bidi"}
     if diffusion_methods & set(methods) and not _SCHEMA_GUIDED_AVAILABLE:
-        print("SDSD diffusion requires dgrammar/llguidance. Install: pip install llguidance>=1.6")
+        print(
+            "SDSD diffusion methods need dgrammar (TokenChecker) + llguidance>=1.6.\n"
+            "  pip install 'llguidance>=1.6'\n"
+            "  Clone dgrammar into vendor/dgrammar, or: pip install -e /path/to/dgrammar, or: export DGRAMMAR_PATH=/path/to/dgrammar"
+        )
         methods = [m for m in methods if m not in diffusion_methods]
 
     if not methods:
-        print("No methods to run. Add --methods or install llguidance for schema_guided.")
+        print(
+            "No methods to run. Install deps above, or pass --methods that do not require dgrammar "
+            "(there are none for this benchmark — SDSD always needs dgrammar)."
+        )
         return 1
 
     print("Loading jsonschema dataset...")

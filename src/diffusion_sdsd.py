@@ -15,6 +15,10 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from dgrammar_import import ensure_dgrammar_path
+
+ensure_dgrammar_path()
+
 from dgrammar.checker import TokenChecker
 from dgrammar.generate import add_gumbel_noise, get_num_transfer_tokens, extend_prefix
 
