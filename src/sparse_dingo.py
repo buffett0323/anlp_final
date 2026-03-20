@@ -54,13 +54,12 @@ def compute_transition_costs_sparse(
     Ti: dict[tuple[int, int], int] = {}
     
     for q_prime in range(csr.num_states):
-        # O(K): Get only valid (token, next_state) pairs for q'
-        transitions = csr.get_transitions(q_prime)
-        
-        # Group by target state q, keep max probability token
+        # O(K): scan row slice (no list(zip) alloc)
+        start, end = csr.get_transitions_range(q_prime)
         best_for_target: dict[int, tuple[float, int]] = {}
-        
-        for t, q_next in transitions:
+        for i in range(start, end):
+            t = csr.column_indices[i]
+            q_next = csr.values[i]
             if t < len(prob_vector):
                 prob = prob_vector[t]
             else:
@@ -121,7 +120,10 @@ def sparse_dingo_dp(
         for q_prev, score in W.items():
             if score == neg_inf:
                 continue
-            for tok, q_next in csr.get_transitions(q_prev):
+            start, end = csr.get_transitions_range(q_prev)
+            for i in range(start, end):
+                tok = csr.column_indices[i]
+                q_next = csr.values[i]
                 if tok < 0:
                     continue
                 lp = _log_prob(pv[tok]) if tok < len(pv) else neg_inf
@@ -159,6 +161,7 @@ def sparse_dingo_dp(
     tokens: list[int] = []
     q_curr = q_max
     for row in reversed(pr_rows):
+        # Pure mask chain: q_curr should always have an inbound pointer (unless bug).
         prev_q, t = row.get(q_curr, (None, None))
         if prev_q is None and t is None:
             return DINGOResult(

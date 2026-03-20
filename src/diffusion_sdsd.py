@@ -28,7 +28,7 @@ from bidirectional_dingo import (
     dfa_run,
     segmented_bidirectional_dingo,
 )
-from csr_dfa import CSRTransitionMatrix, build_csr_from_transition_dict
+from csr_dfa import CSRTransitionMatrix, build_csr_from_transition_dict, dfa_step_csr
 from sparse_dingo import sparse_dingo_dp
 from herding import HerdingMomentumState, herding_single_constrained_step
 from baseline_dingo import baseline_dingo_dp
@@ -61,6 +61,38 @@ def _logits_to_prob_list(logits_1d: torch.Tensor, vocab_size: int) -> list[float
     if len(prob_list) < vocab_size:
         prob_list.extend([0.0] * (vocab_size - len(prob_list)))
     return prob_list
+
+
+def _prefix_tokens_for_bidi_dfa(
+    x_row: torch.Tensor, gen_start: int, end_pos: int, mask_id: int
+) -> list[int]:
+    """Left-to-right tokens in [gen_start, end_pos) excluding mask (validated prefix)."""
+    return [
+        int(x_row[j].item())
+        for j in range(gen_start, end_pos)
+        if int(x_row[j].item()) != mask_id
+    ]
+
+
+def _resync_bidi_dfa_state(
+    csr: CSRTransitionMatrix,
+    json_start: int,
+    x_row: torch.Tensor,
+    gen_start: int,
+    until_idx: int,
+    mask_id: int,
+) -> int | None:
+    """DFA state after consuming non-mask tokens in [gen_start, until_idx)."""
+    q = json_start
+    for j in range(gen_start, until_idx):
+        t = int(x_row[j].item())
+        if t == mask_id:
+            continue
+        nxt = dfa_step_csr(csr, q, t)
+        if nxt is None:
+            return None
+        q = nxt
+    return q
 
 
 def _clear_bidi_gap_ctx(ctx: dict[str, Any] | None) -> None:
@@ -154,8 +186,14 @@ def _bidirectional_frontier_pick(
         suffix.append(tid)
         q += 1
 
-    prefix_tokens = x[0, gen_start:focus_pos].tolist()
-    q_left = dfa_run(csr, json_start_state, prefix_tokens)
+    ql = ctx.get("q_left")
+    if ql is not None and ctx.get("q_left_pos") == focus_pos:
+        q_left = ql
+    else:
+        prefix_tokens = _prefix_tokens_for_bidi_dfa(
+            x[0], gen_start, focus_pos, mask_id
+        )
+        q_left = dfa_run(csr, json_start_state, prefix_tokens)
     if q_left is None:
         _clear_bidi_gap_ctx(ctx)
         return _frontier_picker_base(logits_1d, checker, vocab_size, sparse_dingo_dp)
@@ -418,6 +456,10 @@ def generate_diffusion_sdsd(
     current_batch = 1
     gen_start = prompt.shape[1]
     consume_idx = gen_start
+    bidi_dfa_state: int | None = None
+    if bidi_csr is not None and bidi_live_states is not None:
+        bidi_dfa_state = bidi_json_start_state
+        bidi_csr.suffix_compat_live = frozenset(bidi_live_states)
 
     if prompt_len < gen_start:
         prefix_tokens = x[0, prompt_len:gen_start].tolist()
@@ -450,6 +492,7 @@ def generate_diffusion_sdsd(
                 if complete:
                     break
 
+                prev_consume_idx = consume_idx
                 mask_index = x == mask_id
                 x0 = torch.argmax(logits_with_noise, dim=-1)
                 bidi_ctx = None
@@ -476,6 +519,8 @@ def generate_diffusion_sdsd(
                             "csr": bidi_csr,
                             "json_start_state": bidi_json_start_state,
                             "live_states": bidi_live_states,
+                            "q_left": bidi_dfa_state,
+                            "q_left_pos": consume_idx,
                         }
                     tok = frontier_picker(
                         logits_with_noise[0, consume_idx],
@@ -550,11 +595,45 @@ def generate_diffusion_sdsd(
 
                 if violator < 0:
                     consume_idx = new_idx
+                    if (
+                        bidi_csr is not None
+                        and bidi_live_states is not None
+                        and bidi_dfa_state is not None
+                    ):
+                        for j in range(prev_consume_idx, new_idx):
+                            t = int(x[0, j].item())
+                            if t == mask_id:
+                                continue
+                            nxt = dfa_step_csr(bidi_csr, bidi_dfa_state, t)
+                            if nxt is None:
+                                rs = _resync_bidi_dfa_state(
+                                    bidi_csr,
+                                    bidi_json_start_state,
+                                    x[0],
+                                    gen_start,
+                                    new_idx,
+                                    mask_id,
+                                )
+                                if rs is not None:
+                                    bidi_dfa_state = rs
+                                break
+                            bidi_dfa_state = nxt
                     current_batch = min(current_batch * 2, max_batch_size)
                     _clear_bidi_gap_ctx(bidi_ctx)
                 else:
                     total_violations += 1
                     consume_idx = new_idx
+                    if bidi_csr is not None and bidi_live_states is not None:
+                        rs = _resync_bidi_dfa_state(
+                            bidi_csr,
+                            bidi_json_start_state,
+                            x[0],
+                            gen_start,
+                            new_idx,
+                            mask_id,
+                        )
+                        if rs is not None:
+                            bidi_dfa_state = rs
 
                     if checker.is_accepting():
                         for j in range(violator, x.shape[1]):
@@ -609,6 +688,17 @@ def generate_diffusion_sdsd(
                                 checker, x, consume_idx, mask_id
                             )
                             consume_idx = further_idx
+                            if bidi_csr is not None and bidi_live_states is not None:
+                                rs = _resync_bidi_dfa_state(
+                                    bidi_csr,
+                                    bidi_json_start_state,
+                                    x[0],
+                                    gen_start,
+                                    consume_idx,
+                                    mask_id,
+                                )
+                                if rs is not None:
+                                    bidi_dfa_state = rs
                             break
 
                         logits_with_noise[0, violator, next_vocab] = -np.inf

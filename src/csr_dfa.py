@@ -11,7 +11,8 @@ Decoding for LLM-based Generative Retrieval on Accelerators"
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import bisect
+from dataclasses import dataclass, field
 from typing import Callable
 
 
@@ -32,7 +33,15 @@ class CSRTransitionMatrix:
     values: list[int]          # V: target state IDs, length = total transitions
     num_states: int
     vocab_size: int
-    
+    # If set, ``states_compatible_with_suffix`` caches by suffix only (live set fixed for this CSR).
+    suffix_compat_live: frozenset | None = field(default=None, repr=False)
+
+    def get_transitions_range(self, state: int) -> tuple[int, int]:
+        """Return ``(start, end)`` slice indices into ``column_indices`` / ``values`` (no alloc)."""
+        start = self.row_pointers[state]
+        end = self.row_pointers[state + 1]
+        return start, end
+
     def get_valid_tokens(self, state: int) -> list[int]:
         """Get the K valid token indices for state q. O(K) instead of O(N)."""
         start = self.row_pointers[state]
@@ -40,9 +49,8 @@ class CSRTransitionMatrix:
         return self.column_indices[start:end]
     
     def get_transitions(self, state: int) -> list[tuple[int, int]]:
-        """Get (token_id, next_state) pairs for state q. O(K) lookup."""
-        start = self.row_pointers[state]
-        end = self.row_pointers[state + 1]
+        """Get (token_id, next_state) pairs for state q. O(K) lookup (allocates a list)."""
+        start, end = self.get_transitions_range(state)
         return list(zip(
             self.column_indices[start:end],
             self.values[start:end]
@@ -58,6 +66,31 @@ class CSRTransitionMatrix:
             self.get_num_valid_tokens(q) 
             for q in range(self.num_states)
         ) if self.num_states > 0 else 0
+
+
+def dfa_step_csr(csr: CSRTransitionMatrix, state: int, token: int) -> int | None:
+    """
+    Single transition δ(state, token). O(log K) via binary search on the row's
+    ``column_indices`` slice (sorted ascending by ``t`` in ``build_csr_from_dfa``).
+    """
+    start, end = csr.get_transitions_range(state)
+    if start == end:
+        return None
+    pos = bisect.bisect_left(csr.column_indices, token, start, end)
+    if pos < end and csr.column_indices[pos] == token:
+        return csr.values[pos]
+    return None
+
+
+def dfa_run_csr(csr: CSRTransitionMatrix, start_state: int, tokens: list[int]) -> int | None:
+    """Consume ``tokens`` from ``start_state``; O(len(tokens) * log K) vs linear K scan."""
+    q = start_state
+    for t in tokens:
+        nxt = dfa_step_csr(csr, q, t)
+        if nxt is None:
+            return None
+        q = nxt
+    return q
 
 
 def build_csr_from_dfa(

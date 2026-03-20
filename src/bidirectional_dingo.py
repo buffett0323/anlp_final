@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 from typing import Any, Literal, TypedDict
 
-from csr_dfa import CSRTransitionMatrix
+from csr_dfa import CSRTransitionMatrix, dfa_run_csr, dfa_step_csr
 from sparse_dingo import DINGOResult, sparse_dingo_dp
 
 _CACHE_ATTR = "_bidi_suffix_compat_cache"
@@ -28,25 +28,12 @@ def clear_suffix_compat_cache(csr: CSRTransitionMatrix | None = None) -> None:
 
 
 def dfa_run(csr: CSRTransitionMatrix, start_state: int, tokens: list[int]) -> int | None:
-    """Consume ``tokens`` from ``start_state``; return final state or None if stuck."""
-    q = start_state
-    for t in tokens:
-        nxt: int | None = None
-        for tok, q_next in csr.get_transitions(q):
-            if tok == t:
-                nxt = q_next
-                break
-        if nxt is None:
-            return None
-        q = nxt
-    return q
+    """Consume ``tokens`` from ``start_state``; O(len(tokens)×log K) via ``dfa_step_csr``."""
+    return dfa_run_csr(csr, start_state, tokens)
 
 
 def _dfa_step(csr: CSRTransitionMatrix, state: int, token: int) -> int | None:
-    for tok, q_next in csr.get_transitions(state):
-        if tok == token:
-            return q_next
-    return None
+    return dfa_step_csr(csr, state, token)
 
 
 def states_compatible_with_suffix(
@@ -58,17 +45,20 @@ def states_compatible_with_suffix(
     States q such that after consuming ``suffix_tokens`` from q, the DFA is in
     a live (accepting) state — i.e. valid meeting states before the suffix.
     """
-    key = (tuple(suffix_tokens), frozenset(live_states))
-    bucket: dict[tuple[tuple[int, ...], frozenset[int]], set[int]] = getattr(
-        csr, _CACHE_ATTR, {}
-    )
+    if csr.suffix_compat_live is not None:
+        key = (tuple(suffix_tokens),)
+        live_set: set[int] | frozenset[int] = csr.suffix_compat_live
+    else:
+        key = (tuple(suffix_tokens), frozenset(live_states))
+        live_set = live_states
+    bucket: dict[tuple, set[int]] = getattr(csr, _CACHE_ATTR, {})
     if key in bucket:
         return bucket[key]
 
     good: set[int] = set()
     for q in range(csr.num_states):
         end = dfa_run(csr, q, suffix_tokens)
-        if end is not None and end in live_states:
+        if end is not None and end in live_set:
             good.add(q)
     bucket = dict(bucket)
     bucket[key] = good
@@ -127,13 +117,16 @@ def _mask_step_sparse_forward(
     pv: list[float],
     neg_inf: float,
 ) -> tuple[dict[int, float], dict[int, tuple[int | None, int | None]]]:
-    """One mask column: O(|reachable| × K) forward update."""
+    """One mask column: O(|reachable| × K) forward update (no per-edge list alloc)."""
     w_new: dict[int, float] = {}
     row: dict[int, tuple[int | None, int | None]] = {}
     for q_old, sc in w.items():
         if sc == neg_inf:
             continue
-        for tok, q_next in csr.get_transitions(q_old):
+        start, end = csr.get_transitions_range(q_old)
+        for i in range(start, end):
+            tok = csr.column_indices[i]
+            q_next = csr.values[i]
             if tok < 0:
                 continue
             lp = _log_p(pv[tok]) if tok < len(pv) else neg_inf
