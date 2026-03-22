@@ -1,0 +1,29 @@
+[project]
+name = "dgrammar"
+version = "0.1.0"
+description = "Grammar-constrained decoding for diffusion LLMs via selective remasking"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "datasets>=4.8.3",
+    "jsonschema>=4.26.0",
+    "numpy>=2.2.6",
+    "torch>=2.10.0",
+    "transformers==4.52.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "maturin>=1.12.5",
+    "pytest>=9.0.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "maturin>=1.0",
+]

@@ -106,6 +106,9 @@ def _run_diffusion_sdsd(
     gen_length: int = 256,
     steps: int = 128,
     block_length: int = 32,
+    ggbs_beam_size: int | None = None,
+    ggbs_grammar_topk: int | None = None,
+    ggbs_grammar_max_topk: int | None = None,
 ) -> dict:
     """Run SDSD diffusion: our DINGO/Herding at frontier, same T/steps as Dgrammar."""
     from diffusion_sdsd import generate_diffusion_sdsd, make_frontier_picker
@@ -119,6 +122,7 @@ def _run_diffusion_sdsd(
     frontier_picker = make_frontier_picker(method, herding_state=herding_state)
 
     bidi_csr = bidi_live = bidi_start = None
+    eff_ggbs = ggbs_beam_size if method == "ggbs" else None
     if method == "bidi":
         bidi_csr, bidi_start, bidi_live = build_json_dfa_from_tokenizer(tokenizer)
 
@@ -143,6 +147,9 @@ def _run_diffusion_sdsd(
         bidi_csr=bidi_csr,
         bidi_live_states=bidi_live,
         bidi_json_start_state=bidi_start if bidi_start is not None else 0,
+        ggbs_beam_size=eff_ggbs,
+        ggbs_grammar_topk=ggbs_grammar_topk if method == "ggbs" else None,
+        ggbs_grammar_max_topk=ggbs_grammar_max_topk if method == "ggbs" else None,
     ):
         pass
     elapsed = time.perf_counter() - t0
@@ -397,6 +404,12 @@ def main():
                         help="Block length for generate_diffusion_sdsd (default 32)")
     parser.add_argument("--gen-length", type=int, default=GEN_LENGTH,
                         help="Generation length in tokens (default 256)")
+    parser.add_argument("--ggbs-beam-size", type=int, default=8,
+                        help="Beam size for GGBS method (default 8)")
+    parser.add_argument("--ggbs-grammar-topk", type=int, default=256,
+                        help="GGBS: probe grammar on top-K logits per mask (default 256)")
+    parser.add_argument("--ggbs-grammar-max-topk", type=int, default=8192,
+                        help="GGBS: max expanded K before optional full-mask fallback (default 8192)")
     args = parser.parse_args()
 
     methods = [m.strip() for m in args.methods.split(",") if m.strip()]
@@ -416,7 +429,7 @@ def main():
         )
         methods = [m for m in methods if m != "schema_guided"]
 
-    diffusion_methods = {"sdsd", "ablation1", "ablation2", "ablation3", "baseline", "argmax", "bidi"}
+    diffusion_methods = {"sdsd", "ablation1", "ablation2", "ablation3", "baseline", "argmax", "bidi", "ggbs"}
     if diffusion_methods & set(methods) and not _SCHEMA_GUIDED_AVAILABLE:
         print(
             "SDSD diffusion methods need dgrammar (TokenChecker) + llguidance>=1.6.\n"
@@ -492,13 +505,16 @@ def main():
                 except Exception as e:
                     pbar.write(f"  {instance['instance_id']}: schema_guided failed: {e}")
                     r = {"decoded": "", "elapsed": 0, "success": False, "timing": {}}
-            elif method in ("sdsd", "ablation1", "ablation2", "ablation3", "baseline", "argmax", "bidi"):
+            elif method in ("sdsd", "ablation1", "ablation2", "ablation3", "baseline", "argmax", "bidi", "ggbs"):
                 try:
                     r = _run_diffusion_sdsd(
                         instance, model, tokenizer, method, device,
                         gen_length=args.gen_length,
                         steps=args.steps,
                         block_length=args.block_length,
+                        ggbs_beam_size=args.ggbs_beam_size,
+                        ggbs_grammar_topk=args.ggbs_grammar_topk,
+                        ggbs_grammar_max_topk=args.ggbs_grammar_max_topk,
                     )
                 except Exception as e:
                     pbar.write(f"  {instance['instance_id']}: {method} failed: {e}")

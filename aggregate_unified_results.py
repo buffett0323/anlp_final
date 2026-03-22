@@ -34,6 +34,7 @@ METHOD_NAMES = {
     "ablation3": "Ablation3 (Spec-Tree)",
     "sdsd": "SDSD (Ours)",
     "bidi": "BiDi (bidirectional gap)",
+    "ggbs": "GGBS (grammar-guided beam)",
     "dgrammar": "Dgrammar",
     "dgrammar_v2": "Dgrammar v2",
     "dgrammar_v2_async": "Dgrammar v2+async+AC4",
@@ -132,6 +133,10 @@ def load_result_files(results_dir: Path, method_filter: list[str] | None = None)
             elif "sdsd_sdsd" in name:
                 method = "sdsd"
             elif "sdsd_bidi" in name:
+                method = "bidi"
+            elif "sdsd_ggbs" in name or "_ggbs_" in name or "ggbs_timed" in name or "ggbs_lave" in name:
+                method = "ggbs"
+            elif "bidi_timed" in name:
                 method = "bidi"
             elif ("v2_async" in name or "ac4" in name) and "lave" not in name:
                 method = "dgrammar_v2_async"

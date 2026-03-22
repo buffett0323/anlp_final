@@ -10,6 +10,8 @@ Aligned knobs (defaults match ``run_unified_benchmark.py`` and Dgrammar/LAVE scr
 
 LAVE is executed **only** if ``vendor/dgrammar/bench/run_lave_timed.py`` exists (same convention as ``run_unified_benchmark.sh``).
 
+**BiDi timed** (same argv / metrics layout as LAVE timed, but runs our BiDi diffusion): ``bench/run_bidi_timed.py`` — use ``--run-bidi-timed`` to run it into ``--output`` (or pass a 6th arg to the script for a custom results dir).
+
 Examples::
 
     # Ours only (writes JSONL under results/lave_sdsd_compare)
@@ -17,6 +19,9 @@ Examples::
 
     # Ours + LAVE + README-style table (markdown printed + saved by aggregate)
     python run_lave_sdsd_compare.py --methods sdsd,bidi --limit 272 --run-lave --aggregate
+
+    # BiDi with LAVE-style per-op timing (forward vs constraint), JSONL into --output
+    python run_lave_sdsd_compare.py --skip-ours --run-bidi-timed --limit 20 --output results/bidi_timed_run
 
     # Table from existing dirs (prints ASCII + markdown; writes unified_comparison.md)
     python run_lave_sdsd_compare.py --aggregate-only \\
@@ -97,6 +102,28 @@ def _run_unified_benchmark_subprocess(args: argparse.Namespace, out_dir: Path) -
     return subprocess.call(cmd, cwd=str(ROOT))
 
 
+def _run_bidi_timed_vendor(args: argparse.Namespace, out_dir: Path) -> int:
+    script = ROOT / "bench" / "run_bidi_timed.py"
+    if not script.is_file():
+        print(
+            f"\n[SKIP] BiDi timed: missing {script}\n"
+        )
+        return 1
+    n_inst = args.limit if args.limit is not None else 272
+    cmd = [
+        sys.executable,
+        str(script),
+        str(args.lave_seed),
+        str(n_inst),
+        "jsonschema",
+        str(args.steps),
+        str(args.lave_extra),
+        str(out_dir),
+    ]
+    print("Running BiDi timed:", " ".join(cmd), f"(cwd={ROOT})")
+    return subprocess.call(cmd, cwd=str(ROOT))
+
+
 def _run_lave_vendor(args: argparse.Namespace) -> int:
     script = ROOT / "vendor" / "dgrammar" / "bench" / "run_lave_timed.py"
     if not script.is_file():
@@ -158,6 +185,14 @@ def main() -> int:
         help="Document only; dataset is fixed inside run_unified_benchmark.load_jsonschema_dataset",
     )
     p.add_argument("--run-lave", action="store_true", help="Run vendor/dgrammar/bench/run_lave_timed.py after ours")
+    p.add_argument(
+        "--run-bidi-timed",
+        action="store_true",
+        help=(
+            "Run bench/run_bidi_timed.py (same setup & metrics as run_lave_timed.py, BiDi instead of LAVE). "
+            "Writes JSONL under --output (6th arg to script)."
+        ),
+    )
     p.add_argument("--skip-ours", action="store_true", help="Only run LAVE / aggregate (no SDSD run)")
     p.add_argument("--lave-seed", type=int, default=0, help="First argument to run_lave_timed.py")
     p.add_argument(
@@ -229,10 +264,18 @@ def main() -> int:
             print(f"run_unified_benchmark.py exited with {rc}")
             return rc
 
+    if args.skip_ours and (args.run_lave or args.run_bidi_timed):
+        out_dir.mkdir(parents=True, exist_ok=True)
+
     if args.run_lave:
         rc_l = _run_lave_vendor(args)
         if rc_l != 0 and rc == 0:
             rc = rc_l
+
+    if args.run_bidi_timed:
+        rc_b = _run_bidi_timed_vendor(args, out_dir)
+        if rc_b != 0 and rc == 0:
+            rc = rc_b
 
     if args.aggregate:
         lave_dir = ROOT / "vendor" / "dgrammar" / "results"

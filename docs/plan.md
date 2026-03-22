@@ -552,3 +552,69 @@ DINGO：
 ```
 
 **這就是為什麼這個算法只有在 diffusion LLM 上才有意義。** Autoregressive 模型沒有右側資訊，做不了雙向約束。這是你的 contribution 的核心：**第一個利用 diffusion 模型雙向特性的 exact constrained decoding 算法。**
+
+
+輸入：
+  x = 當前序列，有些位置是確定 token，有些是 mask
+  這個 step 的 positions_to_unmask（topk confidence 決定）
+  每個 mask 位置的 prob_vector（forward pass 的結果）
+
+Step 1：建 segments
+  把序列切成交替的 fixed/mask 段
+  例如：[a, b, [M1], d, e, [M3], f, [M7], g]
+  → [
+      fixed: [a, b],
+      mask:  pos=M1, probs=P1,
+      fixed: [d, e],
+      mask:  pos=M3, probs=P3,
+      fixed: [f],
+      mask:  pos=M7, probs=P7,
+      fixed: [g],   ← suffix
+    ]
+
+Step 2：從左邊 prefix 建 forward parser state
+  parser.advance(a) → parser.advance(b) → q_left
+  （增量，不從頭 parse）
+
+Step 3：從右邊 suffix 做反向 Earley pass
+  backward_chart = earley_backward(suffix=[g], live_states)
+  → 告訴你「哪些 parser state 走完 [g] 之後還合法」
+
+Step 4：Beam Search 跑過所有 segments
+  beams = [{parser_state: q_left, log_prob: 0.0, tokens: []}]
+  
+  for seg in segments:
+      if seg.type == "fixed":
+          # 每個 beam 確定性地 advance，不展開
+          for beam in beams:
+              for tok in seg.tokens:
+                  beam.parser_state = beam.parser_state.advance(tok)
+      
+      else:  # mask
+          candidates = []
+          for beam in beams:
+              # 問 Earley：哪些 token 現在合法？
+              valid = beam.parser_state.valid_next_tokens()
+              
+              # 加右側約束：提前剪掉「走完之後 suffix 一定不合法」的路徑
+              valid = [t for t in valid
+                       if compatible(beam.parser_state.advance_preview(t),
+                                     backward_chart)]
+              
+              # top-k，確定性，按 prob 排序
+              top_k = sorted(valid, key=lambda t: -seg.probs[t])[:beam_size]
+              
+              for tok in top_k:
+                  candidates.append({
+                      "parser_state": beam.parser_state.advance(tok),
+                      "log_prob": beam.log_prob + log(seg.probs[tok]),
+                      "tokens": beam.tokens + [(seg.pos, tok)],
+                  })
+          
+          # 保留 top-k
+          beams = sorted(candidates, key=lambda b: -b["log_prob"])[:beam_size]
+
+Step 5：回傳最優 beam 的 token 選擇
+  best = beams[0]
+  result = {pos: tok for pos, tok in best["tokens"]}
+  return result  # {M1: tok_a, M3: tok_b, M7: tok_c}

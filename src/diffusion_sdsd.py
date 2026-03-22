@@ -28,6 +28,7 @@ from bidirectional_dingo import (
     dfa_run,
     segmented_bidirectional_dingo,
 )
+from ggbs import segmented_ggbs_beam, token_is_valid_after_prefix
 from csr_dfa import CSRTransitionMatrix, build_csr_from_transition_dict, dfa_step_csr
 from sparse_dingo import sparse_dingo_dp
 from herding import HerdingMomentumState, herding_single_constrained_step
@@ -100,6 +101,88 @@ def _clear_bidi_gap_ctx(ctx: dict[str, Any] | None) -> None:
         return
     ctx.pop("bidi_tokens", None)
     ctx.pop("bidi_positions", None)
+
+
+def _prefix_tokens_for_checker(
+    x_row: torch.Tensor, prompt_len: int, end_pos: int, mask_id: int
+) -> list[int]:
+    """Committed tokens in [prompt_len, end_pos) (non-mask)."""
+    return [
+        int(x_row[j].item())
+        for j in range(prompt_len, end_pos)
+        if int(x_row[j].item()) != mask_id
+    ]
+
+
+def _ggbs_frontier_pick(
+    logits_1d: torch.Tensor,
+    checker: TokenChecker,
+    vocab_size: int,
+    ctx: dict[str, Any],
+) -> int:
+    """
+    GGBS: beam search on TokenChecker-valid tokens over the same mask gap as BiDi,
+    with suffix pruning on the last mask before a fixed right suffix.
+    """
+    x = ctx["x"]
+    focus_pos: int = ctx["focus_pos"]
+    logits_seq: torch.Tensor = ctx["logits_seq"]
+    mask_id: int = ctx["mask_id"]
+    prompt_len: int = ctx["prompt_len"]
+    beam_size: int = int(ctx.get("ggbs_beam_size") or 8)
+    grammar_topk: int = int(ctx.get("ggbs_grammar_topk") or 256)
+    grammar_max_topk: int = int(ctx.get("ggbs_grammar_max_topk") or 8192)
+
+    seq_len = x.shape[1]
+    if focus_pos >= seq_len or int(x[0, focus_pos].item()) != mask_id:
+        _clear_bidi_gap_ctx(ctx)
+        return _frontier_picker_base(logits_1d, checker, vocab_size, sparse_dingo_dp)
+
+    segments, mask_positions, pos_after = _build_bidi_segments_from_x(
+        x, focus_pos, seq_len, mask_id, logits_seq, vocab_size, MAX_BIDI_GAP
+    )
+    if not segments or not mask_positions:
+        _clear_bidi_gap_ctx(ctx)
+        return _frontier_picker_base(logits_1d, checker, vocab_size, sparse_dingo_dp)
+
+    suffix: list[int] = []
+    q = pos_after
+    while q < seq_len:
+        tid = int(x[0, q].item())
+        if tid == mask_id:
+            break
+        suffix.append(tid)
+        q += 1
+
+    prefix_tokens = _prefix_tokens_for_checker(x[0], prompt_len, focus_pos, mask_id)
+
+    res = segmented_ggbs_beam(
+        checker,
+        prefix_tokens=prefix_tokens,
+        segments=segments,
+        mask_positions=mask_positions,
+        suffix_tokens=suffix,
+        vocab_size=vocab_size,
+        beam_size=max(1, beam_size),
+        grammar_topk=max(1, grammar_topk),
+        grammar_max_topk=max(grammar_topk, grammar_max_topk),
+    )
+    if not res["success"] or not res["tokens"]:
+        _clear_bidi_gap_ctx(ctx)
+        return _frontier_picker_base(logits_1d, checker, vocab_size, sparse_dingo_dp)
+
+    if len(res["tokens"]) != len(mask_positions):
+        _clear_bidi_gap_ctx(ctx)
+        return _frontier_picker_base(logits_1d, checker, vocab_size, sparse_dingo_dp)
+
+    first = res["tokens"][0]
+    if not token_is_valid_after_prefix(checker, prefix_tokens, first):
+        _clear_bidi_gap_ctx(ctx)
+        return _frontier_picker_base(logits_1d, checker, vocab_size, sparse_dingo_dp)
+
+    ctx["bidi_tokens"] = res["tokens"]
+    ctx["bidi_positions"] = mask_positions
+    return first
 
 
 def _build_bidi_segments_from_x(
@@ -320,7 +403,7 @@ def _herding_persistent_frontier(
 
 
 def make_frontier_picker(method: str, herding_state: HerdingMomentumState | None = None):
-    """Create frontier_picker for sdsd, ablation1, ablation2, ablation3, baseline, argmax, bidi.
+    """Create frontier_picker for sdsd, ablation1, ablation2, ablation3, baseline, argmax, bidi, ggbs.
 
     Pickers accept optional 4th argument ``ctx`` (dict) for bidirectional gap DP.
     """
@@ -406,6 +489,13 @@ def make_frontier_picker(method: str, herding_state: HerdingMomentumState | None
             )
 
         return _bidi
+    if method == "ggbs":
+        def _ggbs(logits_1d, checker, vocab_size, ctx=None):
+            if ctx is None:
+                return _sparse_dingo(logits_1d, checker, vocab_size, None)
+            return _ggbs_frontier_pick(logits_1d, checker, vocab_size, ctx)
+
+        return _ggbs
     return _sparse_dingo
 
 
@@ -429,15 +519,20 @@ def generate_diffusion_sdsd(
     bidi_csr: CSRTransitionMatrix | None = None,
     bidi_live_states: set[int] | None = None,
     bidi_json_start_state: int = 0,
+    ggbs_beam_size: int | None = None,
+    ggbs_grammar_topk: int | None = None,
+    ggbs_grammar_max_topk: int | None = None,
 ):
     """
     Diffusion generation with SDSD constraint at frontier.
 
     frontier_picker(logits_1d, checker, vocab_size, ctx=None) -> token_id
     When ``bidi_csr`` is set, ``ctx`` is passed with x, focus_pos, logits_seq for
-    bidirectional gap Viterbi (see ``make_frontier_picker("bidi")``).  The full
-    gap is written to ``x0`` with boosted confidence and ``topk`` batch size at
-    least the gap length (capped by ``max_batch_size``) so the Viterbi tokens
+    bidirectional gap Viterbi (see ``make_frontier_picker("bidi")``).  When
+    ``ggbs_beam_size`` is set, ``ctx`` is passed for GGBS (``make_frontier_picker("ggbs")``).
+    Optional ``ggbs_grammar_topk`` / ``ggbs_grammar_max_topk`` tune top-K grammar probes (see ``ggbs``).
+    The full gap is written to ``x0`` with boosted confidence and ``topk`` batch size at
+    least the gap length (capped by ``max_batch_size``) so the gap tokens
     commit together.
     """
     start_time = time.monotonic()
@@ -509,19 +604,29 @@ def generate_diffusion_sdsd(
 
                 # SDSD frontier: use our picker instead of argmax
                 if consume_idx < x.shape[1] and mask_index[0, consume_idx]:
-                    if bidi_csr is not None and bidi_live_states is not None:
+                    if (bidi_csr is not None and bidi_live_states is not None) or (
+                        ggbs_beam_size is not None
+                    ):
                         bidi_ctx = {
                             "x": x,
                             "focus_pos": consume_idx,
                             "logits_seq": logits_with_noise[0],
                             "gen_start": gen_start,
                             "mask_id": mask_id,
-                            "csr": bidi_csr,
-                            "json_start_state": bidi_json_start_state,
-                            "live_states": bidi_live_states,
-                            "q_left": bidi_dfa_state,
-                            "q_left_pos": consume_idx,
+                            "prompt_len": prompt_len,
                         }
+                        if ggbs_beam_size is not None:
+                            bidi_ctx["ggbs_beam_size"] = ggbs_beam_size
+                            if ggbs_grammar_topk is not None:
+                                bidi_ctx["ggbs_grammar_topk"] = ggbs_grammar_topk
+                            if ggbs_grammar_max_topk is not None:
+                                bidi_ctx["ggbs_grammar_max_topk"] = ggbs_grammar_max_topk
+                        if bidi_csr is not None and bidi_live_states is not None:
+                            bidi_ctx["csr"] = bidi_csr
+                            bidi_ctx["json_start_state"] = bidi_json_start_state
+                            bidi_ctx["live_states"] = bidi_live_states
+                            bidi_ctx["q_left"] = bidi_dfa_state
+                            bidi_ctx["q_left_pos"] = consume_idx
                     tok = frontier_picker(
                         logits_with_noise[0, consume_idx],
                         checker,
@@ -657,17 +762,27 @@ def generate_diffusion_sdsd(
                     found = False
                     while len(resamples) < max_resamples:
                         bidi_ctx = None
-                        if bidi_csr is not None and bidi_live_states is not None:
+                        if (bidi_csr is not None and bidi_live_states is not None) or (
+                            ggbs_beam_size is not None
+                        ):
                             bidi_ctx = {
                                 "x": x,
                                 "focus_pos": violator,
                                 "logits_seq": logits_with_noise[0],
                                 "gen_start": gen_start,
                                 "mask_id": mask_id,
-                                "csr": bidi_csr,
-                                "json_start_state": bidi_json_start_state,
-                                "live_states": bidi_live_states,
+                                "prompt_len": prompt_len,
                             }
+                            if ggbs_beam_size is not None:
+                                bidi_ctx["ggbs_beam_size"] = ggbs_beam_size
+                                if ggbs_grammar_topk is not None:
+                                    bidi_ctx["ggbs_grammar_topk"] = ggbs_grammar_topk
+                                if ggbs_grammar_max_topk is not None:
+                                    bidi_ctx["ggbs_grammar_max_topk"] = ggbs_grammar_max_topk
+                            if bidi_csr is not None and bidi_live_states is not None:
+                                bidi_ctx["csr"] = bidi_csr
+                                bidi_ctx["json_start_state"] = bidi_json_start_state
+                                bidi_ctx["live_states"] = bidi_live_states
                         next_vocab = frontier_picker(
                             logits_with_noise[0, violator],
                             checker,
