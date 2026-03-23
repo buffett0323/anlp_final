@@ -13,18 +13,18 @@ GGBS replaces per-step sampling with a **segmented beam** over valid token prefi
 Aggregated from saved bench outputs (wall-clock `time_taken`, schema validity bit `valid`, and `timing.constraint_pct` as reported by each method):
 
 
-| Method   | Syntactic | Functional | Mean Time (s) | Median (s) | P95 (s) | Max (s) | Constraint % |
-| -------- | --------- | ---------- | ------------- | ---------- | ------- | ------- | ------------ |
-| **LAVE** | 98.1%     | —          | 26.1          | 13.9       | 68.6    | 663.3   | 37.2         |
-| **GGBS** | 98.4%     | —          | 31.7          | 14.1       | 82.7    | 1728.0  | 13.6         |
+| Method   | n   | Syntactic | Functional | Mean Time (s) | Median (s) | P95 (s) | Max (s) | Constraint % (median) |
+| -------- | --- | --------- | ---------- | ------------- | ---------- | ------- | ------- | --------------------- |
+| **LAVE** | 250 | 98.40%    | —          | 25.22         | 14.39      | 60.7    | 663.3   | 61.34                 |
+| **GGBS** | 251 | 98.41%    | —          | 31.67         | 14.06      | 86.4    | 1728.0  | 12.28                 |
 
 
 **Notes**
 
-- **Sources:** `vendor/dgrammar/results/lave_timed_jsonschema_s0_t128.jsonl` (n = 213), `vendor/dgrammar/results/ggbs_lave_timed_jsonschema_s0_t128.jsonl` (n = 251). Subset and ordering follow that bench run; instance sets are not identical (211 overlapping `instance_id`s).
+- **Sources:** `vendor/dgrammar/results/lave_timed_jsonschema_s0_t128.jsonl` (n = 250), `vendor/dgrammar/results/ggbs_lave_timed_jsonschema_s0_t128.jsonl` (n = 251). Instance sets are not identical; ordering follows each bench run independently.
 - **Syntactic:** fraction of rows with `valid: true` (schema check as produced by the bench).
-- **Functional:** not stored in these timed JSONL files; use `aggregate_unified_results.py` with `**vendor/CD4dLLM`** (ETH checker) if you need functional accuracy.
-- **Constraint %:** mean of per-instance `timing.constraint_pct` (wall-time fraction attributed to constraint / mask work, as logged by the runner).
+- **Functional:** not stored in these timed JSONL files; use `aggregate_unified_results.py` with `vendor/CD4dLLM` (ETH checker) if you need functional accuracy.
+- **Constraint %:** median of per-instance `timing.constraint_pct` (wall-time fraction attributed to constraint / mask work). LAVE's mean constraint % is 120.42% (heavily skewed by outliers with very short forward passes), so the median (61.34%) is reported. GGBS mean is 13.56%, median 12.28%.
 
 ## Installation
 
