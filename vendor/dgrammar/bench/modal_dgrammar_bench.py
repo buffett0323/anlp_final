@@ -25,12 +25,14 @@ image = (
         "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && "
         ". /root/.cargo/env && "
         "cd /root/constrained-diffusion/rustformlang_bindings && "
+        "rm -rf target/wheels && "
         "maturin build --release && "
         "pip install target/wheels/*.whl && "
         "cd /root/constrained-diffusion && pip install -e .",
     )
     .add_local_dir("../dgrammar", "/root/dgrammar")
     .add_local_file("run_dgrammar_timed.py", "/root/run_dgrammar_timed.py")
+    .add_local_file("jsb_dataset.py", "/root/jsb_dataset.py")
     .add_local_file("../pyproject.toml", "/root/pyproject.toml")
 )
 
@@ -43,14 +45,16 @@ RESULTS_VOL = modal.Volume.from_name("dgrammar-results", create_if_missing=True)
     timeout=7200,
     volumes={"/results": RESULTS_VOL},
 )
-def run_chunk(seed: int, limit: int, offset: int, steps: int, block_ar: int = 1):
+def run_chunk(seed: int, limit: int, offset: int, steps: int, block_ar: int = 1,
+              dataset: str = "jsonschema"):
     import subprocess
     import shutil
 
     tag = "v2_async_ac4_timed" if block_ar else "v2_async_ac4_fullpar_timed"
+    ds_safe = dataset.replace("/", "_")
     suffix = f"_off{offset}" if offset > 0 else ""
-    local_file = f"/root/results/{tag}_jsonschema_s{seed}_t{steps}{suffix}.jsonl"
-    out_file = f"/results/{tag}_jsonschema_s{seed}_t{steps}{suffix}.jsonl"
+    local_file = f"/root/results/{tag}_{ds_safe}_s{seed}_t{steps}{suffix}.jsonl"
+    out_file = f"/results/{tag}_{ds_safe}_s{seed}_t{steps}{suffix}.jsonl"
 
     # Remove stale output
     import os
@@ -60,7 +64,7 @@ def run_chunk(seed: int, limit: int, offset: int, steps: int, block_ar: int = 1)
     result = subprocess.run(
         [
             "python", "/root/run_dgrammar_timed.py",
-            str(seed), str(limit), "jsonschema", str(steps), str(offset),
+            str(seed), str(limit), dataset, str(steps), str(offset),
             str(block_ar),
         ],
         capture_output=True,
@@ -92,10 +96,11 @@ def main(
     steps: int = 128,
     chunks: int = 2,
     block_ar: int = 1,
+    dataset: str = "jsonschema",
 ):
     chunk_size = (total + chunks - 1) // chunks
     mode = "block_ar=32" if block_ar else "full_parallel=256"
-    print(f"Running Dgrammar v2 async timed on {chunks}x A100: jsonschema, seed={seed}, T={steps}, {mode}")
+    print(f"Running Dgrammar v2 async timed on {chunks}x A100: {dataset}, seed={seed}, T={steps}, {mode}")
     print(f"Total={total}, chunk_size={chunk_size}")
 
     handles = []
@@ -105,7 +110,7 @@ def main(
         if limit <= 0:
             break
         print(f"  Chunk {i}: offset={offset}, limit={limit}")
-        handles.append(run_chunk.spawn(seed, limit, offset, steps, block_ar))
+        handles.append(run_chunk.spawn(seed, limit, offset, steps, block_ar, dataset))
 
     for i, handle in enumerate(handles):
         result = handle.get()

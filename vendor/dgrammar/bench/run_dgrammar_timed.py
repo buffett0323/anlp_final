@@ -12,6 +12,7 @@ import torch.nn.functional as F
 
 from constrained_diffusion.eval.dllm.dataset import load_dataset
 from constrained_diffusion.eval.dllm.model import load_model
+import jsb_dataset  # noqa: F401 - registers jsb_* datasets
 from dgrammar.checker import TokenChecker
 from dgrammar.generate import add_gumbel_noise, get_num_transfer_tokens
 

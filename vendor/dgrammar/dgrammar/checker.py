@@ -8,8 +8,6 @@ import torch
 from llguidance import LLMatcher, LLTokenizer, LLParserLimits
 from huggingface_hub import hf_hub_download
 
-from .grammar_cache import get_cached_grammar
-
 
 class TokenChecker:
     """Grammar checker operating directly on token IDs."""
@@ -20,8 +18,16 @@ class TokenChecker:
         )
         self.tokenizer = LLTokenizer(tokenizer_path)
 
-        # Shared compiled grammar (immutable); avoid recompilation per instance / clone.
-        grm = get_cached_grammar(grammar)
+        import json
+        try:
+            json.loads(grammar)
+            grm = LLMatcher.grammar_from_json_schema(grammar)
+        except (json.JSONDecodeError, TypeError):
+            grm = LLMatcher.grammar_from_lark(grammar)
+
+        is_err, _ = LLMatcher.validate_grammar_with_warnings(grm)
+        assert not is_err, "Grammar is not valid"
+
         self._grammar = grm
         limits = LLParserLimits(max_items_in_row=20000, step_max_items=600000)
         self.matcher = LLMatcher(self.tokenizer, grm, log_level=1, limits=limits)
@@ -77,7 +83,7 @@ class TokenChecker:
         self.matcher.reset()
 
     def clone(self):
-        """Create a new checker: shared tokenizer + shared compiled grammar, fresh LLMatcher only."""
+        """Create a new checker with the same grammar (fresh state)."""
         checker = TokenChecker.__new__(TokenChecker)
         checker.tokenizer = self.tokenizer
         checker._grammar = self._grammar

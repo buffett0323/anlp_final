@@ -5,9 +5,14 @@ description = "Grammar-constrained decoding for diffusion LLMs via selective rem
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "accelerate>=1.13.0",
     "datasets>=4.8.3",
+    "frozendict>=2.4.7",
     "jsonschema>=4.26.0",
+    "llguidance>=1.7.0",
+    "modal>=1.4.1",
     "numpy>=2.2.6",
+    "stopit>=1.1.2",
     "torch>=2.10.0",
     "transformers==4.52.2",
 ]
@@ -27,3 +32,4 @@ dev = [
     "pytest>=7.0",
     "maturin>=1.0",
 ]
+

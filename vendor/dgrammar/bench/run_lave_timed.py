@@ -7,12 +7,22 @@ We monkey-patch the Checker to record per-operation timing.
 import json
 import time
 import sys
+import signal
 from pathlib import Path
 
 import torch
 
+
+class InstanceTimeout(Exception):
+    pass
+
+
+def _timeout_handler(signum, frame):
+    raise InstanceTimeout("Instance timeout")
+
 from constrained_diffusion.eval.dllm.dataset import load_dataset
 from constrained_diffusion.eval.dllm.model import load_model
+import jsb_dataset  # noqa: F401 - registers jsb_* datasets
 
 
 class LAVETimingStats:
@@ -116,6 +126,7 @@ def main():
     dataset_name = sys.argv[3] if len(sys.argv) > 3 else "jsonschema"
     steps = int(sys.argv[4]) if len(sys.argv) > 4 else 128
     offset = int(sys.argv[5]) if len(sys.argv) > 5 else 0
+    instance_timeout = int(sys.argv[6]) if len(sys.argv) > 6 else 120
 
     tag = "lave_timed"
     ds_safe = dataset_name.replace("/", "_")
@@ -156,6 +167,8 @@ def main():
         torch.manual_seed(seed)
         start_time = time.monotonic()
 
+        signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(instance_timeout)
         try:
             out, total_retry_num, gen_start_time = lave_generate(
                 model,
@@ -175,9 +188,41 @@ def main():
                 random_n_beam=20,
                 max_retry_num_total=1000,
             )
-        except Exception as e:
-            print(f"  [{i+1}/{len(instances)}] {instance.instance_id()}: ERROR {e}")
+        except InstanceTimeout:
+            signal.alarm(0)
+            elapsed = time.monotonic() - start_time
+            print(f"  [{i+1}/{len(instances)}] {instance.instance_id()}: TIMEOUT ({elapsed:.1f}s)")
+            result = {
+                "instance_id": instance.instance_id(),
+                "method": "lave",
+                "valid": False,
+                "extracted": None,
+                "time_taken": elapsed,
+                "resamples": 0,
+                "timing": {"timeout": True},
+            }
+            Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+            with open(output_file, "a") as f:
+                print(json.dumps(result), flush=True, file=f)
             continue
+        except Exception as e:
+            signal.alarm(0)
+            elapsed = time.monotonic() - start_time
+            print(f"  [{i+1}/{len(instances)}] {instance.instance_id()}: ERROR {e}")
+            result = {
+                "instance_id": instance.instance_id(),
+                "method": "lave",
+                "valid": False,
+                "extracted": None,
+                "time_taken": elapsed,
+                "resamples": 0,
+                "timing": {"error": True, "message": str(e)},
+            }
+            Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+            with open(output_file, "a") as f:
+                print(json.dumps(result), flush=True, file=f)
+            continue
+        signal.alarm(0)
 
         elapsed = time.monotonic() - start_time
         STATS.retry_count = total_retry_num

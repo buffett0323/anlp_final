@@ -11,10 +11,19 @@ Records:
 import json
 import time
 import sys
+import signal
 from pathlib import Path
 from collections import defaultdict
 
 import torch
+
+
+class InstanceTimeout(Exception):
+    pass
+
+
+def _timeout_handler(signum, frame):
+    raise InstanceTimeout("Instance timeout")
 
 from constrained_diffusion.constrain_utils import (
     compile_lex_map,
@@ -28,6 +37,7 @@ from constrained_diffusion.constrain_utils import (
 from constrained_diffusion.eval.dllm.dataset import load_dataset
 from constrained_diffusion.eval.dllm.model import load_model
 from rustformlang.cfg import CFG, is_intersection_empty_threaded
+import jsb_dataset  # noqa: F401 - registers jsb_* datasets
 
 
 # --- Timing instrumentation ---
@@ -263,8 +273,9 @@ def main():
     dataset_name = sys.argv[3] if len(sys.argv) > 3 else "jsonschema"
     steps = int(sys.argv[4]) if len(sys.argv) > 4 else 128
     offset = int(sys.argv[5]) if len(sys.argv) > 5 else 0
+    instance_timeout = int(sys.argv[6]) if len(sys.argv) > 6 else 120
 
-    tag = f"igcd_timed"
+    tag = "igcd_timed"
     ds_safe = dataset_name.replace("/", "_")
     suffix = f"_off{offset}" if offset > 0 else ""
     output_file = f"results/{tag}_{ds_safe}_s{seed}_t{steps}{suffix}.jsonl"
@@ -320,18 +331,44 @@ def main():
         out = None
         resamples = []
         valid = False
-        for out, resamples, valid in generate_timed(
-            model, prompt_ids, tokenizer,
-            constraint_lang=lang, lex_map=lex_map,
-            prompt_len=prompt_len,
-            steps=steps, gen_length=256, block_length=32,
-            temperature=0.2, remasking="low_confidence",
-            prelex=prelex, subtokens=subtokens,
-            strip_chars=instance.strip_chars(),
-            additional_stuff=additional_stuff,
-            constrain=True, max_resamples=100,
-        ):
-            pass
+        signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(instance_timeout)
+        try:
+            for out, resamples, valid in generate_timed(
+                model, prompt_ids, tokenizer,
+                constraint_lang=lang, lex_map=lex_map,
+                prompt_len=prompt_len,
+                steps=steps, gen_length=256, block_length=32,
+                temperature=0.2, remasking="low_confidence",
+                prelex=prelex, subtokens=subtokens,
+                strip_chars=instance.strip_chars(),
+                additional_stuff=additional_stuff,
+                constrain=True, max_resamples=100,
+            ):
+                pass
+        except InstanceTimeout:
+            signal.alarm(0)
+            elapsed = time.monotonic() - start_time
+            print(f"  [{i+1}/{len(instances)}] {instance.instance_id()}: TIMEOUT ({elapsed:.1f}s)")
+            result = {
+                "instance_id": instance.instance_id(),
+                "method": "igcd",
+                "valid": False,
+                "extracted": None,
+                "autocompletion": None,
+                "time_taken": elapsed,
+                "resamples": 0,
+                "timing": {"timeout": True},
+            }
+            Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+            with open(output_file, "a") as f:
+                print(json.dumps(result), flush=True, file=f)
+            continue
+        except Exception as e:
+            signal.alarm(0)
+            print(f"  [{i+1}/{len(instances)}] {instance.instance_id()}: ERROR {e}")
+            continue
+        signal.alarm(0)
 
         elapsed = time.monotonic() - start_time
 
