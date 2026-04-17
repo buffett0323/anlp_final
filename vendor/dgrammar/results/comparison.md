@@ -1,37 +1,195 @@
-# Method Comparison: LAVE vs DGrammar vs DP
+# Results Comparison
 
-**Dataset:** `jsb_medium`, seed=0, T=128, offsets=[0, 68, 136, 204] (272 LAVE / 241 DGrammar & DP instances)
+**Dataset:** jsb\_medium &nbsp;|&nbsp; **Seed:** 0 &nbsp;|&nbsp; **Steps:** 128
 
-## Summary Table
+## Summary
 
-| Method   |  n  | Syntactic | Functional | Mean Time (s) | Median (s) | P95 (s) | Max (s) | Constraint % (median) |
-|----------|:---:|:---------:|:----------:|:-------------:|:----------:|:-------:|:-------:|:---------------------:|
-| LAVE     | 272 |   66.5%   |   66.5%    |     35.66     |   20.64    | 120.00  | 120.01  |         3.2%          |
-| DGrammar | 241 |   86.7%   |   86.7%    |     13.76     |   13.94    |  20.91  |  33.15  |        30.2%          |
-| DP       | 241 |   83.0%   |   83.0%    |     16.89     |   16.29    |  28.84  |  37.75  |         8.3%          |
+| Metric                    | LAVE   | Dgrammar | DPGrammar |
+| ------------------------- | ------ | -------- | --------- |
+| N instances               | 586    | 511      | 511       |
+| Valid (count)             | 403    | 434      | 507       |
+| Validity (%)              | 68.8%  | 84.9%    | 99.2%     |
+| Avg time (s)              | 34.59  | 13.14    | 14.96     |
+| Avg resamples             | 222.64 | 32.43    | 1.06      |
+| Avg fwd passes            | 99.2   | 104.7    | 99.4      |
+| Constraint overhead (%)   | 11.95  | 24.25    | 12.67     |
+| Eff. constraint (%)       | —      | 20.43    | 1.22      |
+| Per-token total (ms)      | 111.52 | 100.74   | 71.92     |
+| Per-token constraint (ms) | 6.642  | 8.259    | 0.304     |
+| Avg mask compute (ms)     | —      | 427.2    | 577.0     |
+| Avg forward total (ms)    | 3951.6 | 4611.6   | 4229.0    |
 
-> **Syntactic = Functional** (schema validity used as proxy for functional correctness).
+## Per-instance Validity Agreement
 
-## Notes
+Each row shows a validity pattern across methods (LAVE, Dgrammar, DPGrammar) and how many instances share that pattern.
 
-- **LAVE** hits the 120 s timeout on ~5% of instances (P95 ≈ Max), explaining the inflated mean vs median.
-- **DGrammar** is the fastest method (mean 13.8 s) with the highest validity (86.7%), but carries a high constraint overhead (30.2% median) due to synchronous mask computation in the greedy retry loop.
-- **DP** reduces constraint overhead to 8.3% (median) via async mask overlap — mask computation runs in a background thread during the GPU forward pass. Validity (83.0%) is slightly below DGrammar because DP searches only the top-100 tokens per position, while DGrammar exhausts the full vocabulary.
-- DP uses an average of **1.0 resamples/sample** vs DGrammar's **28.2**, at the cost of ~17 extra forward passes per sample (124 vs 107).
+| Pattern (LAVE / Dgrammar / DPGrammar) | Count | %     | Example IDs             |
+| ------------------------------------- | ----- | ----- | ----------------------- |
+| ✓  ✓  ✓                               | 365   | 62.3% | o10217, o10518, o10617… |
+| ✗  —  —                               | 75    | 12.8% | o10566, o12175, o12178… |
+| ✗  ✓  ✓                               | 67    | 11.4% | o10297, o11795, o12286… |
+| ✓  ✗  ✓                               | 38    | 6.5%  | o1050, o12241, o13189…  |
+| ✗  ✗  ✓                               | 37    | 6.3%  | o10927, o11689, o11975… |
+| ✗  ✓  ✗                               | 2     | 0.3%  | o44462, o75601          |
+| ✗  ✗  ✗                               | 2     | 0.3%  | o5462, o83287           |
 
-## Per-Offset Breakdown
+Total unique instances across all files: **586**
 
-| Method   | Offset |  n  | Syntactic | Mean Time (s) | Constraint % (median) |
-|----------|--------|:---:|:---------:|:-------------:|:---------------------:|
-| LAVE     | 0      |  68 |   55.9%   |     41.26     |         4.0%          |
-| LAVE     | 68     |  68 |   69.1%   |     33.01     |         3.3%          |
-| LAVE     | 136    |  68 |   76.5%   |     27.90     |         1.9%          |
-| LAVE     | 204    |  68 |   64.7%   |     40.45     |         7.0%          |
-| DGrammar | 0      |  61 |   80.3%   |     13.20     |        32.0%          |
-| DGrammar | 68     |  59 |   88.1%   |     13.44     |        25.8%          |
-| DGrammar | 136    |  63 |   90.5%   |     13.32     |        26.3%          |
-| DGrammar | 204    |  58 |   87.9%   |     15.14     |        34.1%          |
-| DP       | 0      |  61 |   73.8%   |     16.12     |         8.6%          |
-| DP       | 68     |  59 |   84.7%   |     19.11     |         8.2%          |
-| DP       | 136    |  63 |   90.5%   |     14.85     |         6.5%          |
-| DP       | 204    |  58 |   82.8%   |     17.65     |         9.7%          |
+## Disagreement Cases
+
+Instances valid for some methods but not others (sorted by instance ID):
+
+| Instance ID | LAVE | Dgrammar | DPGrammar |
+| ----------- | ---- | -------- | --------- |
+| o10297      | ✗    | ✓        | ✓         |
+| o1050       | ✓    | ✗        | ✓         |
+| o10927      | ✗    | ✗        | ✓         |
+| o11689      | ✗    | ✗        | ✓         |
+| o11795      | ✗    | ✓        | ✓         |
+| o11975      | ✗    | ✗        | ✓         |
+| o12241      | ✓    | ✗        | ✓         |
+| o12286      | ✗    | ✓        | ✓         |
+| o12496      | ✗    | ✓        | ✓         |
+| o12610      | ✗    | ✓        | ✓         |
+| o13         | ✗    | ✓        | ✓         |
+| o13189      | ✓    | ✗        | ✓         |
+| o13402      | ✗    | ✓        | ✓         |
+| o14474      | ✓    | ✗        | ✓         |
+| o14478      | ✗    | ✓        | ✓         |
+| o15131      | ✗    | ✓        | ✓         |
+| o17539      | ✗    | ✗        | ✓         |
+| o20375      | ✗    | ✗        | ✓         |
+| o20460      | ✗    | ✓        | ✓         |
+| o21062      | ✗    | ✓        | ✓         |
+| o21095      | ✗    | ✗        | ✓         |
+| o21100      | ✗    | ✓        | ✓         |
+| o21225      | ✓    | ✗        | ✓         |
+| o21285      | ✗    | ✓        | ✓         |
+| o21846      | ✓    | ✗        | ✓         |
+| o25768      | ✗    | ✓        | ✓         |
+| o26111      | ✗    | ✓        | ✓         |
+| o26594      | ✓    | ✗        | ✓         |
+| o27216      | ✗    | ✗        | ✓         |
+| o27362      | ✗    | ✗        | ✓         |
+| o27789      | ✗    | ✗        | ✓         |
+| o30439      | ✓    | ✗        | ✓         |
+| o30761      | ✗    | ✓        | ✓         |
+| o30877      | ✗    | ✗        | ✓         |
+| o31090      | ✗    | ✓        | ✓         |
+| o31100      | ✗    | ✓        | ✓         |
+| o31136      | ✗    | ✓        | ✓         |
+| o31835      | ✗    | ✓        | ✓         |
+| o33011      | ✗    | ✗        | ✓         |
+| o33928      | ✗    | ✓        | ✓         |
+| o33932      | ✗    | ✓        | ✓         |
+| o34336      | ✓    | ✗        | ✓         |
+| o36073      | ✗    | ✓        | ✓         |
+| o36440      | ✗    | ✓        | ✓         |
+| o3907       | ✓    | ✗        | ✓         |
+| o39500      | ✓    | ✗        | ✓         |
+| o41780      | ✗    | ✗        | ✓         |
+| o41800      | ✗    | ✓        | ✓         |
+| o4264       | ✓    | ✗        | ✓         |
+| o42985      | ✗    | ✗        | ✓         |
+| o44206      | ✗    | ✓        | ✓         |
+| o44258      | ✗    | ✗        | ✓         |
+| o44462      | ✗    | ✓        | ✗         |
+| o45752      | ✗    | ✓        | ✓         |
+| o45806      | ✓    | ✗        | ✓         |
+| o47263      | ✗    | ✓        | ✓         |
+| o48073      | ✗    | ✓        | ✓         |
+| o48116      | ✗    | ✗        | ✓         |
+| o48339      | ✗    | ✗        | ✓         |
+| o49732      | ✗    | ✓        | ✓         |
+| o5165       | ✗    | ✓        | ✓         |
+| o52827      | ✗    | ✗        | ✓         |
+| o5344       | ✗    | ✗        | ✓         |
+| o5352       | ✓    | ✗        | ✓         |
+| o5369       | ✓    | ✗        | ✓         |
+| o53702      | ✓    | ✗        | ✓         |
+| o5375       | ✗    | ✗        | ✓         |
+| o5395       | ✗    | ✓        | ✓         |
+| o54557      | ✗    | ✓        | ✓         |
+| o54973      | ✗    | ✓        | ✓         |
+| o55102      | ✗    | ✓        | ✓         |
+| o55595      | ✗    | ✓        | ✓         |
+| o56232      | ✗    | ✓        | ✓         |
+| o57650      | ✗    | ✓        | ✓         |
+| o58601      | ✗    | ✗        | ✓         |
+| o60099      | ✗    | ✓        | ✓         |
+| o60173      | ✗    | ✓        | ✓         |
+| o60864      | ✓    | ✗        | ✓         |
+| o60973      | ✓    | ✗        | ✓         |
+| o60997      | ✗    | ✗        | ✓         |
+| o61001      | ✗    | ✓        | ✓         |
+| o61616      | ✗    | ✓        | ✓         |
+| o61636      | ✗    | ✓        | ✓         |
+| o61638      | ✗    | ✓        | ✓         |
+| o6230       | ✗    | ✗        | ✓         |
+| o6243       | ✓    | ✗        | ✓         |
+| o6256       | ✓    | ✗        | ✓         |
+| o63181      | ✗    | ✗        | ✓         |
+| o64726      | ✗    | ✓        | ✓         |
+| o65372      | ✗    | ✗        | ✓         |
+| o65504      | ✓    | ✗        | ✓         |
+| o65751      | ✗    | ✓        | ✓         |
+| o66330      | ✗    | ✗        | ✓         |
+| o66610      | ✗    | ✓        | ✓         |
+| o67599      | ✗    | ✗        | ✓         |
+| o68447      | ✗    | ✗        | ✓         |
+| o69100      | ✗    | ✗        | ✓         |
+| o69161      | ✗    | ✗        | ✓         |
+| o69763      | ✓    | ✗        | ✓         |
+| o69971      | ✗    | ✓        | ✓         |
+| o69975      | ✗    | ✓        | ✓         |
+| o69991      | ✗    | ✓        | ✓         |
+| o70369      | ✗    | ✓        | ✓         |
+| o70372      | ✗    | ✗        | ✓         |
+| o70379      | ✗    | ✓        | ✓         |
+| o72521      | ✗    | ✓        | ✓         |
+| o73018      | ✓    | ✗        | ✓         |
+| o7377       | ✗    | ✓        | ✓         |
+| o7381       | ✓    | ✗        | ✓         |
+| o73952      | ✓    | ✗        | ✓         |
+| o73958      | ✗    | ✗        | ✓         |
+| o74180      | ✓    | ✗        | ✓         |
+| o74424      | ✗    | ✗        | ✓         |
+| o7540       | ✓    | ✗        | ✓         |
+| o75601      | ✗    | ✓        | ✗         |
+| o7633       | ✗    | ✓        | ✓         |
+| o76474      | ✓    | ✗        | ✓         |
+| o78058      | ✓    | ✗        | ✓         |
+| o78735      | ✗    | ✓        | ✓         |
+| o78957      | ✓    | ✗        | ✓         |
+| o79651      | ✗    | ✓        | ✓         |
+| o80822      | ✓    | ✗        | ✓         |
+| o81649      | ✗    | ✓        | ✓         |
+| o82154      | ✓    | ✗        | ✓         |
+| o82311      | ✗    | ✓        | ✓         |
+| o82635      | ✗    | ✓        | ✓         |
+| o82712      | ✗    | ✓        | ✓         |
+| o83272      | ✗    | ✓        | ✓         |
+| o83282      | ✓    | ✗        | ✓         |
+| o84343      | ✗    | ✗        | ✓         |
+| o87934      | ✓    | ✗        | ✓         |
+| o88958      | ✓    | ✗        | ✓         |
+| o90425      | ✗    | ✓        | ✓         |
+| o90951      | ✗    | ✗        | ✓         |
+| o9775       | ✗    | ✗        | ✓         |
+| o9795       | ✓    | ✗        | ✓         |
+| o9796       | ✓    | ✗        | ✓         |
+| o9852       | ✗    | ✓        | ✓         |
+| o9874       | ✗    | ✓        | ✓         |
+| o9875       | ✗    | ✓        | ✓         |
+| o9881       | ✗    | ✗        | ✓         |
+| o9886       | ✗    | ✓        | ✓         |
+| o9932       | ✗    | ✗        | ✓         |
+| o9944       | ✓    | ✗        | ✓         |
+
+## File Inventory
+
+| Group (base name)                     | Method            | Shards | Total records |
+| ------------------------------------- | ----------------- | ------ | ------------- |
+| lave_timed_jsb_medium_s0_t128         | lave              | 9      | 586           |
+| v2_async_ac4_timed_jsb_medium_s0_t128 | dgrammar_v2_async | 9      | 511           |
+| dp_jsb_medium_s0_t128                 | dgrammar_dp       | 9      | 511           |
