@@ -105,15 +105,122 @@ def extend_prefix_timed(checker, x, consume_idx, mask_id):
         return consume_idx + count, consume_idx + count
 
 
-def _minimal_json_value(schema, depth=0):
+def _pattern_min_string(pattern: str) -> str:
+    """Generate a minimal string satisfying a simple regex pattern.
+
+    Handles \\d, \\w, \\s, [char-class], {N}, {N,M}, ?, *, +, (, |, ., literal chars.
+    Used by _minimal_json_value for schemas with 'pattern' constraints.
+    """
+    p = pattern.lstrip('^').rstrip('$')
+    result: list[str] = []
+    i = 0
+    while i < len(p):
+        c = p[i]
+        if c == '\\' and i + 1 < len(p):
+            nc = p[i + 1]
+            if nc == 'd':   result.append('0')
+            elif nc == 'w': result.append('a')
+            elif nc == 's': result.append(' ')
+            elif nc == 'D': result.append('a')
+            elif nc == 'W': result.append(' ')
+            elif nc == 'S': result.append('a')
+            else:           result.append(nc)
+            i += 2
+        elif c == '[':
+            j = p.find(']', i + 1)
+            if j < 0: j = len(p) - 1
+            cls = p[i + 1:j]
+            if cls.startswith('^'): cls = cls[1:]
+            ch = cls[0] if cls else 'a'  # first char in class
+            result.append(ch)
+            i = j + 1
+            # consume quantifier
+            if i < len(p) and p[i] == '{':
+                j2 = p.find('}', i + 1)
+                if j2 >= 0:
+                    try:
+                        n = int(p[i + 1:j2].split(',')[0])
+                        result[-1:] = [ch] * n
+                    except ValueError:
+                        pass
+                    i = j2 + 1
+                else:
+                    i += 1
+            elif i < len(p) and p[i] == '+': i += 1
+            elif i < len(p) and p[i] == '*': result.pop(); i += 1
+            elif i < len(p) and p[i] == '?': result.pop(); i += 1  # use 0 occurrences
+        elif c == '(':
+            # find matching ')'
+            depth_g, j = 1, i + 1
+            while j < len(p) and depth_g > 0:
+                if p[j] == '(': depth_g += 1
+                elif p[j] == ')': depth_g -= 1
+                j += 1
+            inner = p[i + 1:j - 1]
+            first_alt = inner.split('|')[0]
+            sub = _pattern_min_string(first_alt)
+            result.append(sub)
+            i = j
+            if i < len(p) and p[i] == '?': result.pop(); i += 1  # optional → skip
+            elif i < len(p) and p[i] == '*': result.pop(); i += 1
+            elif i < len(p) and p[i] == '+': i += 1
+            elif i < len(p) and p[i] == '{':
+                j2 = p.find('}', i + 1)
+                if j2 >= 0:
+                    try:
+                        n = max(1, int(p[i + 1:j2].split(',')[0]))
+                        last = result.pop() if result else sub
+                        result.extend([last] * n)
+                    except ValueError:
+                        pass
+                    i = j2 + 1
+                else:
+                    i += 1
+        elif c == '{':
+            j = p.find('}', i + 1)
+            if j >= 0:
+                try:
+                    n = max(1, int(p[i + 1:j].split(',')[0]))
+                    if result:
+                        last = result.pop()
+                        result.extend([last] * n)
+                except ValueError:
+                    pass
+                i = j + 1
+            else:
+                result.append(c); i += 1
+        elif c == '.': result.append('x'); i += 1
+        elif c == '|': break  # use first alternative only
+        elif c in '+*?':
+            if c in '*?' and result: result.pop()
+            i += 1
+        else:
+            result.append(c); i += 1
+    return ''.join(result)
+
+
+def _minimal_json_value(schema, depth=0, root_schema=None):
     """Return a minimal Python value (JSON-serialisable) satisfying `schema`.
 
-    Handles the common JSON Schema keywords used in jsb_medium.  Deliberately
-    returns conservative defaults (empty strings, 0s, empty arrays) that are
-    accepted by most schemas without complex constraints.
+    Handles common JSON Schema keywords including:
+    - pattern: uses _pattern_min_string to generate a matching string
+    - $ref: resolved against root_schema["definitions"]
+    - properties ordering: uses schema definition order (typically alphabetical),
+      not required-list order, to match llguidance grammar enforcement order
     """
     if depth > 10 or not isinstance(schema, dict):
         return ""
+
+    # Resolve $ref first
+    if "$ref" in schema and root_schema is not None:
+        ref = schema["$ref"]
+        if ref.startswith("#/definitions/"):
+            def_name = ref[len("#/definitions/"):]
+            defs = root_schema.get("definitions", {})
+            if def_name in defs:
+                merged = dict(defs[def_name])
+                merged.update({k: v for k, v in schema.items() if k != "$ref"})
+                return _minimal_json_value(merged, depth, root_schema)
 
     # const / enum take absolute priority
     if "const" in schema:
@@ -127,7 +234,7 @@ def _minimal_json_value(schema, depth=0):
             merged = dict(schema)
             merged.update(schema[kw][0])
             merged.pop(kw, None)
-            val = _minimal_json_value(merged, depth)
+            val = _minimal_json_value(merged, depth, root_schema)
             if val is not None:
                 return val
 
@@ -136,7 +243,7 @@ def _minimal_json_value(schema, depth=0):
         for t in type_:
             if t == "null":
                 continue  # prefer non-null
-            v = _minimal_json_value(dict(schema, type=t), depth)
+            v = _minimal_json_value(dict(schema, type=t), depth, root_schema)
             if v is not None:
                 return v
         return None
@@ -157,6 +264,7 @@ def _minimal_json_value(schema, depth=0):
         return val
     if type_ == "string":
         fmt = schema.get("format", "")
+        pattern = schema.get("pattern", "")
         min_len = schema.get("minLength", 0)
         if fmt in ("uri", "iri", "uri-reference", "iri-reference"):
             return "http://x.example.com"
@@ -176,27 +284,43 @@ def _minimal_json_value(schema, depth=0):
             return "0.0.0.0"
         if fmt == "ipv6":
             return "::1"
+        # Pattern constraint: generate a minimal matching string
+        if pattern:
+            s = _pattern_min_string(pattern)
+            if len(s) >= max(1, min_len):
+                return s
         return "x" * max(1, min_len)
     if type_ == "array":
         min_items = schema.get("minItems", 0)
         items_schema = schema.get("items", {})
         if not isinstance(items_schema, dict):
             items_schema = {}
-        return [_minimal_json_value(items_schema, depth + 1) for _ in range(max(0, min_items))]
+        return [_minimal_json_value(items_schema, depth + 1, root_schema)
+                for _ in range(max(0, min_items))]
 
     # object (explicit or implied by presence of properties/required)
     if type_ == "object" or "properties" in schema or "required" in schema:
-        required = schema.get("required", [])
+        required_set = set(schema.get("required", []))
         properties = schema.get("properties", {})
         result = {}
-        for key in required:
-            prop_schema = properties.get(key, {})
-            val = _minimal_json_value(prop_schema, depth + 1)
-            result[key] = val if val is not None else ""
+        # Use properties dict ORDER (typically alphabetical = grammar enforcement order)
+        # NOT the required-list order, which may differ from grammar's expected order.
+        # llguidance enforces properties in definition/alphabetical order; using required-
+        # list order causes guided_encode to fail with n_valid=1 at property name positions.
+        for key in properties:
+            if key in required_set:
+                prop_schema = properties[key]
+                val = _minimal_json_value(prop_schema, depth + 1, root_schema)
+                result[key] = val if val is not None else ""
+        # Include any required properties not in properties dict (fallback)
+        for key in schema.get("required", []):
+            if key not in result:
+                result[key] = ""
         return result
 
-    # No explicit type — check format for type hints
+    # No explicit type — check format/pattern for type hints
     fmt = schema.get("format", "")
+    pattern = schema.get("pattern", "")
     if fmt in ("uri", "iri", "uri-reference", "iri-reference"):
         return "http://x.example.com"
     if fmt in ("date-time", "datetime"):
@@ -373,27 +497,23 @@ def _force_close_grammar(checker, vocab_size, max_steps=2048, priority_ids=None,
 
         valid_set = set(valid_ids)
 
-        # Find ALL structural tokens among valid (scan full valid set).
-        runtime_structural = set()
-        if tokenizer is not None:
-            for tid in valid_ids:
-                if _decode_stripped(tokenizer, tid) in _STRUCTURAL_CHARS:
-                    runtime_structural.add(tid)
+        # REMOVED: per-step O(n_valid × decode_time) runtime_structural scan.
+        # Previously iterated all valid tokens and called _decode_stripped on
+        # each to find structural chars.  For n_valid=1000+, this was
+        # 1000 × 0.1ms = 100ms per step → force_close timeout on fresh checker.
+        # priority_ids already covers all structural chars (", }, ], ,, :) and
+        # is O(5) to intersect with valid_set.
+        structural_set = priority_ids & valid_set
 
-        # Build candidate pool.
+        # Build candidate pool: O(|priority_ids| + 6) for large valid sets.
         if len(valid_ids) <= 30:
             candidates = list(valid_ids)
         else:
-            candidates = list(runtime_structural)
-            for p in priority_ids:
-                if p in valid_set and p not in runtime_structural:
-                    candidates.append(p)
+            candidates = [p for p in priority_ids if p in valid_set]
             cand_set = set(candidates)
             for tid in valid_ids[:6]:
                 if tid not in cand_set:
                     candidates.append(tid)
-
-        structural_set = runtime_structural | (priority_ids & valid_set)
 
         chosen = valid_ids[0]
         best_score = float("inf")
@@ -414,6 +534,13 @@ def _force_close_grammar(checker, vocab_size, max_steps=2048, priority_ids=None,
             bias2 = checker.compute_mask(vocab_size=vocab_size)
             next_count = int((~bias2).sum().item())
             checker.matcher.rollback(1)
+
+            # Skip dead-end candidates: if next_count==0, the grammar has no
+            # valid continuation after this token (e.g. `"` inside a format-
+            # constrained string that hasn't satisfied the format yet).
+            # Choosing such a token would permanently block force_close.
+            if next_count == 0:
+                continue
 
             # Two-tier: structural tokens always beat non-structural.
             offset = STRUCT_TIER_OFFSET if candidate in structural_set else CONTENT_TIER_OFFSET
@@ -1018,10 +1145,13 @@ def main():
                 actual_vocab_fc = 126464
                 iid = getattr(instance, '_instance_id', None) or getattr(instance, 'instance_id', lambda: '?')()
                 _fc_t0 = time.monotonic()
-                _fc_deadline = _fc_t0 + 15.0  # 15s hard cap
+                # 5s deadline: easy instances finish in 1-3s (o61593=2.2s, o9886=1.2s);
+                # hard instances (post-dp checker has expensive compute_mask ~100-500ms/call)
+                # fail quickly → pass3b.  Was 15s before — wasted time on hard cases.
+                _fc_deadline = _fc_t0 + 5.0
                 closing_seq = _force_close_grammar(
                     checker, actual_vocab_fc,
-                    max_steps=512,   # was 30; is_accepting() removed from hot path so each step is now <10ms
+                    max_steps=512,
                     priority_ids=_fc_priority_ids,
                     tokenizer=tokenizer,
                     deadline=_fc_deadline,
@@ -1056,7 +1186,7 @@ def main():
 
                         # ── Fast path: grammar-guided encode of _minimal_json_value ──
                         schema_obj = json.loads(schema_str)
-                        min_val = _minimal_json_value(schema_obj)
+                        min_val = _minimal_json_value(schema_obj, root_schema=schema_obj)
                         min_str = json.dumps(min_val, ensure_ascii=False, separators=(',', ':'))
                         min_ids = _grammar_guided_encode(
                             _p3b_fresh(), min_str, tokenizer, vocab_size=126464,
@@ -1071,12 +1201,38 @@ def main():
                                 out = torch.cat([out[:, :gen_start_ac], min_close_t], dim=1)
                                 valid = _recheck_valid(out, gen_start_ac)
 
+                        # ── Medium path: grammar-walk from fresh root state ───────────
+                        # When guided_encode fails (wrong property order or format),
+                        # run _force_close_grammar from a FRESH checker.  The grammar
+                        # itself enforces the correct ordering (n_valid=1 = forced
+                        # sequence) and valid format chars (compute_mask restricts).
+                        # This produces a complete valid JSON without model logits.
+                        # Faster than autocomplete_greedy (no GPU forward passes).
+                        if not valid and not min_ids:
+                            _fc_fresh_t0 = time.monotonic()
+                            _fc_fresh_chk = _p3b_fresh()
+                            _fc_fresh_seq = _force_close_grammar(
+                                _fc_fresh_chk, 126464,
+                                max_steps=512,
+                                priority_ids=_fc_priority_ids,
+                                tokenizer=tokenizer,
+                                deadline=_fc_fresh_t0 + 15.0,
+                            )
+                            _fc_fresh_secs = time.monotonic() - _fc_fresh_t0
+                            print(f"  [pass3b_fc] seq_len={len(_fc_fresh_seq) if _fc_fresh_seq else None} "
+                                  f"time={_fc_fresh_secs:.1f}s")
+                            if _fc_fresh_seq:
+                                _vf = _p3b_fresh()
+                                _n_ok = _vf.matcher.try_consume_tokens(_fc_fresh_seq)
+                                if _n_ok == len(_fc_fresh_seq) and _vf.is_accepting():
+                                    _fc_close_t = torch.tensor(
+                                        _fc_fresh_seq + [eos_id_val],
+                                        dtype=out.dtype, device=out.device,
+                                    ).unsqueeze(0)
+                                    out = torch.cat([out[:, :gen_start_ac], _fc_close_t], dim=1)
+                                    valid = _recheck_valid(out, gen_start_ac)
+
                         # ── Slow path: autocomplete from fresh checker state ──────────
-                        # Used when the pre-built min_str violates grammar constraints
-                        # (property ordering, URI format, etc.).  autocomplete_greedy
-                        # uses actual model logits + grammar mask, so it naturally
-                        # produces grammar-valid output without needing to know the
-                        # correct property order or value format ahead of time.
                         if not valid:
                             _p3b_t0 = time.monotonic()
                             _p3b_chk = _p3b_fresh()

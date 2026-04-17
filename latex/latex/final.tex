@@ -1,0 +1,472 @@
+\begin{abstract}
+Structured outputs from language models (valid JSON under a schema, syntactic code, and similar targets) are safety and integration critical, yet discrete diffusion language models (dLLMs) update many positions in parallel and lack a monotonic prefix, which makes standard autoregressive constrained decoding ill suited. We argue that both \emph{reliable} constraints and \emph{measurable} constraint side cost matter for practical deployment. Our intervention has two parts. \textbf{Dgrammar} is a deterministic decoding stack built on \textsc{llguidance} \citep{cd4dllm}: hard masks only at the decoding frontier, incremental \texttt{LLMatcher} state, AIMD style adaptive batching, violator focused remasking with in place resampling from the same forward when possible, early termination when the grammar accepts, and asynchronous overlap of \texttt{compute\_mask} with the next GPU forward. This targets the stochastic lookahead and positionwise verification limits of the natural baseline, LAVE \citep{zhang2026lookaheadthenverifyreliableconstraineddecoding}. \textbf{DPGrammar} extends the same driver with \texttt{dp\_fix\_prefix}, a Viterbi style dynamic program that jointly reassigns a violated contiguous segment under one forward's log probabilities when greedy repair is myopic. On \texttt{jsb\_medium}, our reimplementation of LAVE reaches 68.8\% schema validity ($n{=}586$, nine shards), while Dgrammar reaches 84.9\% and DPGrammar 99.2\% on a merged nine shard evaluation ($n{=}511$), with DPGrammar reducing mean resamples per instance from 32.43 to 1.06 at the cost of occasional long tail latency. Broadly, the work shows that parser aligned frontier decoding plus explicit timing instrumentation is a strong foundation, and that segment level DP repair can further close validity gaps left by greedy correction.
+\end{abstract}
+
+\section{Introduction}
+
+\subsection{Problem and significance}
+Many applications require model outputs to obey a formal grammar or schema: APIs that consume JSON, tools that compile code, and pipelines that validate structured records. Diffusion language models such as LLaDA \citep{llada} are attractive because they can refine many tokens under bidirectional context, but they do not offer a single left to right chain on which classical FSM style masking is defined. Ensuring constraints without destroying the model's joint proposals, and without hiding constraint cost inside a single wall clock number, is an open engineering and research problem.
+
+\subsection{Research gap}
+Recent work on constrained \emph{diffusion} decoding includes CFG style enforcement \citep{cd4dllm}, lookahead then verify decoding (LAVE) \citep{zhang2026lookaheadthenverifyreliableconstraineddecoding}, and heavier dynamic programming style inference \citep{suresh2025dingoconstrainedinferencediffusion}. LAVE is a strong reference: it samples masked suffixes to test whether a candidate token can extend to a valid completion. Gaps we target are (i) \emph{stochastic} false rejection and cost that grows with sample count, (ii) verification that is not always aligned with a single incremental parser state tied to the actual tensor, and (iii) limited reporting of \emph{per component} constraint time as compared to forward time, which matters when grammar checks are frequent.
+
+\subsection{Approach and how it addresses the gap}
+We implement and study \textbf{Dgrammar}, a full inference loop that applies grammar masks at the \emph{frontier} only, maintains incremental matcher state with \textsc{llguidance}, uses adaptive commit batching, localizes violators, overlaps mask computation with GPU forwards, and instruments timing in the benchmark driver. This directly addresses deterministic alignment to the parser and visibility of constraint overhead. We then add \textbf{DPGrammar}, which runs \texttt{dp\_fix\_prefix} on a violated segment to obtain a joint assignment under the current forward, addressing interactions among several committed tokens that greedy remasking fixes only slowly.
+
+\subsection{Summary of results and insights}
+Table~\ref{tab:main} summarizes \texttt{jsb\_medium} runs. Dgrammar clearly improves validity over our LAVE reimplementation on overlapping evaluation settings, and DPGrammar improves further on the same 511 instances as async Dgrammar, with far fewer resamples. Insights: frontier masking plus incremental parsing is a strong deterministic alternative to sampled suffix verification for this task; joint DP repair on violation segments materially reduces repair churn; effective constraint percentage and resample counts are as informative as aggregate wall clock for comparing systems.
+
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Discrete diffusion and throughput.}
+dLLMs such as LLaDA \citep{llada} and Dream \citep{dream} refine tokens in parallel; blockwise accelerators (e.g., DFlash \citep{chen2026dflashblockdiffusionflash}, Spiffy \citep{agrawal2026spiffymultiplyingdiffusionllm}) reduce steps but typically do not guarantee schema compliance by themselves. Our focus is orthogonal: we assume a fixed backbone and study constraint mechanisms.
+
+\paragraph{Constrained decoding in autoregressive models.}
+Tooling such as Outlines \citep{outlines} and XGrammar \citep{dong2024xgrammar} exploits a monotonic prefix for FSM or grammar guided masking. Those interfaces do not transfer directly to diffusion because there is no single causal frontier until we define one.
+
+\paragraph{Constrained decoding for diffusion.}
+\citet{cd4dllm} formulate CFG constrained diffusion decoding; DINGO \citep{suresh2025dingoconstrainedinferencediffusion} uses DP style ideas with higher per step cost. LAVE \citep{zhang2026lookaheadthenverifyreliableconstraineddecoding} samples completions to verify tokens and has become a natural baseline for parallel verification. Plan style decoders (e.g., PVF \citep{li2026planverifyfillstructured}) emphasize structure aware planning; we stay closer to token level masking with an explicit incremental matcher. Sparse trie style acceleration (STATIC \citep{su2026vectorizingtrieefficientconstrained}) motivates keeping transitions sparse; our DP layer explores top $K$ tokens per position rather than the full vocabulary.
+
+\paragraph{Parallel verification and joint decisions.}
+Speculative decoding \citep{leviathan2023fastinferencetransformersspeculative} motivates verifying multiple tokens under one forward; LAVE relates in spirit but uses random suffixes. Dgrammar instead commits through a single parser trail; DPGrammar adds a joint Viterbi layer on top when that trail conflicts after a batch unmask.
+
+\section{Data}
+\label{sec:data}
+
+We evaluate on \textbf{\texttt{jsb\_medium}}, a JSON Schema benchmark split used in our DLLM evaluation harness, aligned with the JSON schema structured output setting discussed in broader benchmarks \citep{geng2025jsonschemabenchrigorousbenchmarkstructured}. Each instance provides a natural language style prompt, a schema string, and evaluation extracts structured output from the model generation region.
+
+\paragraph{Scale and splits.}
+We report two merge protocols. \textbf{LAVE} rows in Table~\ref{tab:main} use a four shard Modal run with offsets $[0,68,136,204]$, $n{=}272$, seed $0$, $T{=}128$. \textbf{Dgrammar} and \textbf{DPGrammar} use nine paired shards with offsets $0,66,\ldots,528$, JSONL logs merged by \texttt{instance\_id}, yielding $n{=}511$ unique instances per method. The shard counts differ; we therefore interpret LAVE as the reproduced baseline on the older split and treat the nine shard table as the controlled comparison between Dgrammar and DPGrammar.
+
+\paragraph{Preprocessing.}
+Instances without a usable schema string are skipped in the driver. No additional manual annotation is performed; validity is judged by the benchmark's extraction and schema check, surfaced as the boolean \texttt{valid} in result JSON lines.
+
+\section{Method}
+\label{sec:method}
+
+\subsection{Baselines reproduced}
+Our primary external baseline is \textbf{LAVE} \citep{zhang2026lookaheadthenverifyreliableconstraineddecoding}, reimplemented to operate with our LLaDA 8B Instruct backbone and \texttt{jsb\_medium} loader under the same diffusion step budget $T{=}128$ where applicable. This isolates the constraint algorithm rather than changing the base model. We additionally compare \textbf{Dgrammar} (async greedy, \texttt{v2\_async\_ac4\_timed}) against \textbf{DPGrammar} (\texttt{generate\_dp}) on identical instances.
+
+\subsection{Dgrammar: proposed deterministic frontier stack}
+\label{sec:dgrammar}
+We implement schema constraints with \textsc{llguidance}'s \texttt{LLMatcher}: incremental \texttt{try\_consume\_tokens} reuses state instead of reparsing from scratch.
+
+\paragraph{Constraint at the frontier only.}
+\texttt{compute\_mask(vocab\_size)} is applied at the first unresolved position. Other positions may remain masked; we consume left to right over revealed runs. This avoids globally masking every row before the block is coherent.
+
+\paragraph{Incremental prefix semantics.}
+Committed non mask spans advance the matcher across denoising iterations without replaying from the prompt on every check.
+
+\paragraph{Adaptive commit (AIMD style).}
+After successful consumes we increase batch size up to $k_{\max}{=}8$; collisions reset width and identify the first violator.
+
+\paragraph{Violator remask and in place resampling.}
+We remask the violator, zero its logit in the current forward tensor, and iterate alternative argmax choices without always launching a new GPU forward.
+
+\paragraph{Early accept and async overlap.}
+We stop when \texttt{is\_accepting()} holds. \texttt{compute\_mask} for the next frontier runs in a CPU thread overlapping the upcoming forward.
+
+\subsection{DPGrammar: segment DP on top of Dgrammar}
+\label{sec:dpg}
+DPGrammar uses the \emph{same} loop as Dgrammar; the only change is repair at violations. When consumption fails at $c$, we optimize the span $[c,s)$ up to the next mask with \texttt{dp\_fix\_prefix}: Viterbi style DP with DFA keys from \texttt{matcher.compute\_logit\_bias()}, top $K{=}100$ tokens per position in our runs, merging states and backtracking token replacements. If no feasible path exists, we fall back to Dgrammar's greedy remask. Figure~\ref{fig:dp-denoise} illustrates the shared stack and the DP attachment.
+
+\begin{figure*}[t]
+\centering
+% Left panel: algorithm flowchart
+\begin{minipage}[c]{0.54\linewidth}
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize,
+  >=Latex,
+  proc/.style={draw, rounded corners=2pt, align=center, inner sep=5pt, fill=white},
+  arr/.style={thick, ->},
+  lbl/.style={inner sep=1pt, font=\scriptsize},
+]
+  % Shared Dgrammar steps (blue tint)
+  \node[proc, fill=blue!6, text width=5.6cm] (fwd) at (0,0)
+    {\textbf{Dgrammar} (shared): model forward on $x^{(t)}$\\
+     {\scriptsize logits for all positions}};
+  \node[proc, fill=blue!6, text width=5.6cm, below=0.45cm of fwd] (unm)
+    {Frontier \texttt{compute\_mask}; unmask batch and AIMD};
+  \node[proc, fill=blue!6, text width=5.6cm, below=0.45cm of unm] (chk)
+    {\texttt{extend\_prefix} (incremental matcher)};
+  % Fork point below chk
+  \coordinate (split) at ($(chk.south)+(0,-0.35)$);
+  % Left branch: violator path
+  \node[proc, text width=2.7cm] (bad) at ($(split)+(-1.9,-0.75)$)
+    {Violator at~$c$};
+  \node[proc, text width=2.85cm, draw=orange!75!black, very thick, fill=orange!6,
+        below=0.42cm of bad] (dp)
+    {\textbf{DPGrammar only}:\\
+     \texttt{dp\_fix\_prefix} on $[c,s)$\\
+     {\scriptsize Viterbi; top-$K$ and DFA merge}};
+  \node[proc, text width=2.85cm, below=0.38cm of dp] (fall)
+    {Jointly feasible?\\rewrite; else Dgrammar remask};
+  % Right branch: ok path
+  \node[proc, draw=teal!60!black, very thick, text width=2.3cm]
+        (ok) at ($(split)+(1.9,-0.75)$)
+    {No violator:\\next step or\\early EOS};
+  % Arrows
+  \draw[arr] (fwd) -- (unm);
+  \draw[arr] (unm) -- (chk);
+  \draw[arr] (chk.south) -- (split);
+  \draw[arr] (split) -- node[above left, lbl, pos=0.55] {\textit{viol.}} (bad.north);
+  \draw[arr] (split) -- node[above right, lbl, pos=0.55] {\textit{ok}} (ok.north);
+  \draw[arr] (bad) -- (dp);
+  \draw[arr] (dp) -- (fall);
+\end{tikzpicture}
+\end{minipage}%
+\hfill
+% Right panel: token diagram
+\begin{minipage}[c]{0.43\linewidth}
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize,
+  >=Latex,
+  tok/.style={draw, minimum width=6.5mm, minimum height=6.5mm,
+              inner sep=0pt, align=center, font=\scriptsize},
+]
+  % ── Define all nodes first ──
+  % Top row: committed prefix at y=0
+  \node[tok] (p0) at (0.00, 0.00) {$\cdots$};
+  \node[tok] (p1) at (0.75, 0.00) {$t_1$};
+  \node[tok] (p2) at (1.50, 0.00) {$t_2$};
+  \node[tok] (p3) at (2.25, 0.00) {$t_3$};
+  \node[tok, draw=red!70!black, very thick] (pv) at (3.00, 0.00) {$\times$};
+  % Bottom row: DP rewrite at y=-1.9
+  \node[tok, fill=orange!12] (q1) at (0.75, -1.9) {$t_1'$};
+  \node[tok, fill=orange!12] (q2) at (1.50, -1.9) {$t_2'$};
+  \node[tok, fill=orange!12] (q3) at (2.25, -1.9) {$t_3'$};
+  \node[tok, fill=blue!10]   (m1) at (3.00, -1.9) {\textsc{m}};
+  \node[tok, fill=blue!10]   (m2) at (3.75, -1.9) {\textsc{m}};
+  % ── Row labels (above each row) ──
+  \node[anchor=west, font=\scriptsize\itshape] at (-0.40, 0.55)
+    {Committed prefix $x^{(t)}$:};
+  \node[anchor=west, font=\scriptsize\itshape] at (-0.40, -1.35)
+    {DP rewrite for $[c,s)$:};
+  % ── Brace on top row marking [c,s) ──
+  \draw[decorate, decoration={brace, amplitude=3pt, mirror}, thick]
+    ($(p1.south west)+(0,-0.10)$) --
+    node[below=3pt, font=\scriptsize] {$[c,s)$}
+    ($(pv.south east)+(0,-0.10)$);
+  % ── DP correction arrow (violator → rewrite) ──
+  \draw[dashed, ->, thick]
+    (pv.south) to[out=-95, in=85]
+    node[right, font=\scriptsize, pos=0.48, xshift=1pt] {DP}
+    (q3.north);
+\end{tikzpicture}
+\end{minipage}
+\caption{\label{fig:dp-denoise}%
+  \textbf{Dgrammar} (blue tinted): one denoising step applies a full model
+  forward, frontier masking and AIMD unmasking, and incremental
+  \texttt{extend\_prefix}. \textbf{DPGrammar} (orange): when a violator is
+  detected at position $c$, \texttt{dp\_fix\_prefix} jointly rewrites the span
+  $[c,s)$ via Viterbi over top-$K$ tokens before falling back to greedy
+  remasking.}
+\end{figure*}
+
+\subsection{Completion after generation}
+Both systems share driver side repair after the diffusion phase: grammar guided greedy autocomplete, masked extension, grammar only closing, and minimal JSON synthesis from the schema when required.
+
+\subsection{Implementation and compute}
+Code builds on PyTorch, Transformers, \textsc{llguidance}, and the constrained diffusion CD4d style bindings; benchmarks run on \textbf{Modal} with NVIDIA \textbf{A100} GPUs in our experiments. Backbone is \textbf{GSAI ML LLaDA 8B Instruct}. Block length 32 for timed async runs, remasking \texttt{low\_confidence}, temperature 0.2 in the driver, seed 0 unless noted. Full hyperparameter tables can be folded into an appendix if space is tight.
+
+\subsection{Experimental design and metrics}
+\textbf{Schema validity} is the primary outcome (binary \texttt{valid} per instance). \textbf{Wall time} per instance measures end to end driver time. We report median, mean, and P95 to capture heavy tails (LAVE hits a 120\,s cap in our run; DPGrammar shows rare long runs). \textbf{Effective constraint \%} aggregates grammar check time, token selection, mask wait, and autocomplete mask time relative to forward plus overhead, as emitted by \texttt{run\_dgrammar\_timed.py}. \textbf{Resamples} counts remasking events. We did not compute formal confidence intervals; differences are large on validity, but future work should add bootstrap CIs on the same split.
+
+\section{Results}
+\label{sec:results}
+
+%% ─── Figure: LAVE vs Dgrammar single denoising step ─────────────────────────
+\begin{figure*}[t]
+\centering
+\begin{minipage}[t]{0.46\linewidth}
+\centering
+{\small\bfseries LAVE} {\small--- stochastic lookahead-then-verify}
+\vspace{4pt}
+
+\begin{tikzpicture}[
+  font=\footnotesize,>=Latex,
+  tok/.style={draw,rounded corners=1pt,inner sep=2.5pt,minimum height=5.5mm,
+              align=center,font=\scriptsize\ttfamily},
+  mtok/.style={tok,fill=gray!22,draw=gray!50,font=\scriptsize},
+  arr/.style={->,thick},
+  samp/.style={draw,rounded corners=2pt,inner sep=2.5pt,font=\scriptsize,
+               text width=3.5cm,align=left},
+]
+  \node[tok] (i0) at (0,0) {\{};
+  \node[mtok,right=3pt of i0] (i1) {\textsc{m}};
+  \node[mtok,right=3pt of i1] (i2) {\textsc{m}};
+  \node[mtok,right=3pt of i2] (i3) {\textsc{m}};
+  \node[mtok,right=3pt of i3] (i4) {\textsc{m}};
+  \node[mtok,right=3pt of i4] (i5) {\textsc{m}};
+  \node[tok,right=3pt of i5]  (i6) {\}};
+  \node[font=\scriptsize\itshape,anchor=east] at (-0.12,0) {$x^{(t)}$:};
+  \node[font=\tiny\itshape,anchor=west] at ($(i0.south west)+(0,-0.2)$)
+    {schema: \texttt{\{"count":int,\,"label":str\}}};
+  \draw[arr,red!70!black] (i1.north)++(0,.24) -- (i1.north);
+  \node[font=\tiny,red!70!black,above=0.18cm of i1] {frontier $i$};
+
+  \node[font=\scriptsize\itshape] (sl) at ($(i0)!0.5!(i6)+(0,-0.85)$)
+    {Sample $K$ random completions:};
+  \node[samp,fill=red!6,draw=red!40,anchor=north] (s1) at ($(sl.south)+(0,-0.1)$)
+    {\texttt{\{"label":"hi"\}}\hfill\textcolor{red!70!black}{$\times$}\\
+     {\tiny missing \texttt{"count"} key}};
+  \node[samp,fill=green!6,draw=green!50!black,anchor=north] (s2) at ($(s1.south)+(0,-0.08)$)
+    {\texttt{\{"count":1,"label":"a"\}}\hfill\textcolor{green!60!black}{$\checkmark$}};
+  \node[samp,fill=green!6,draw=green!50!black,anchor=north] (s3) at ($(s2.south)+(0,-0.08)$)
+    {\texttt{\{"count":2,"label":"b"\}}\hfill\textcolor{green!60!black}{$\checkmark$}};
+
+  \node[font=\scriptsize\itshape,anchor=north] (dec) at ($(s3.south)+(0,-0.18)$)
+    {$\geq\!1$ valid $\Rightarrow$ accept \texttt{"} at frontier $i$};
+  \node[draw=red!35,fill=red!4,rounded corners=2pt,font=\scriptsize,
+        text width=3.5cm,align=center,inner sep=3pt,anchor=north]
+    at ($(dec.south)+(0,-0.15)$)
+    {\textbf{Cost:} $K$ forwards per token\\Stochastic — P95 hits 120\,s timeout};
+\end{tikzpicture}
+\end{minipage}%
+\hfill
+\begin{minipage}[t]{0.46\linewidth}
+\centering
+{\small\bfseries Dgrammar} {\small--- deterministic frontier masking}
+\vspace{4pt}
+
+\begin{tikzpicture}[
+  font=\footnotesize,>=Latex,
+  tok/.style={draw,rounded corners=1pt,inner sep=2.5pt,minimum height=5.5mm,
+              align=center,font=\scriptsize\ttfamily},
+  mtok/.style={tok,fill=gray!22,draw=gray!50,font=\scriptsize},
+  ctok/.style={tok,fill=blue!10,draw=blue!45},
+  arr/.style={->,thick},
+]
+  \node[tok] (i0) at (0,0) {\{};
+  \node[mtok,right=3pt of i0] (i1) {\textsc{m}};
+  \node[mtok,right=3pt of i1] (i2) {\textsc{m}};
+  \node[mtok,right=3pt of i2] (i3) {\textsc{m}};
+  \node[mtok,right=3pt of i3] (i4) {\textsc{m}};
+  \node[mtok,right=3pt of i4] (i5) {\textsc{m}};
+  \node[tok,right=3pt of i5]  (i6) {\}};
+  \node[font=\scriptsize\itshape,anchor=east] at (-0.12,0) {$x^{(t)}$:};
+  \node[font=\tiny\itshape,anchor=west] at ($(i0.south west)+(0,-0.2)$)
+    {schema: \texttt{\{"count":int,\,"label":str\}}};
+  \draw[arr,blue!70!black] (i1.north)++(0,.24) -- (i1.north);
+  \node[font=\tiny,blue!70!black,above=0.18cm of i1] {frontier $i$};
+
+  \node[draw=blue!30,fill=blue!5,rounded corners=2pt,font=\scriptsize,
+        text width=3.5cm,inner sep=3pt,anchor=north] (mask)
+    at ($(i0)!0.5!(i6)+(0,-0.9)$)
+    {\texttt{compute\_mask} at frontier $i$:\\
+     FSM: after \texttt{\{}, only \texttt{"} valid\\
+     $\mathrm{valid\ tokens} \gets \{\texttt{"}\}$};
+  \draw[arr,blue!50] ($(i1.south)+(0,-0.15)$) -- (mask.north);
+
+  \node[font=\scriptsize\itshape,anchor=north] (ul) at ($(mask.south)+(0,-0.12)$)
+    {Unmask block $[i,\,i{+}B)$ under mask:};
+
+  \node[tok]  (c0) at (0,-2.55) {\{};
+  \node[ctok,right=3pt of c0] (c1) {"count"};
+  \node[ctok,right=3pt of c1] (c2) {:};
+  \node[mtok,right=3pt of c2] (c3) {\textsc{m}};
+  \node[mtok,right=3pt of c3] (c4) {\textsc{m}};
+  \node[mtok,right=3pt of c4] (c5) {\textsc{m}};
+  \node[font=\tiny\itshape,blue!60!black,anchor=north]
+    at ($(c1)!0.5!(c2)+(0,-0.3)$) {committed under grammar};
+
+  \node[draw=blue!35,fill=blue!4,rounded corners=2pt,font=\scriptsize,
+        text width=3.5cm,align=center,inner sep=3pt]
+    at ($(c0)!0.5!(c5)+(0,-1.05)$)
+    {\textbf{Cost:} 1 forward per block (async)\\Deterministic — no sampling variance};
+\end{tikzpicture}
+\end{minipage}
+\caption{\label{fig:denoise-compare}%
+  One denoising step under schema \texttt{\{"count":int,\,"label":str\}}.
+  \textbf{LAVE} \citep{zhang2026lookaheadthenverifyreliableconstraineddecoding}
+  (left) samples $K$ random completions at each frontier token, accepting it
+  only when $\geq\!1$ suffix is valid—stochastic and $K\!\times$ more expensive
+  per token, hitting the 120\,s per-instance timeout on hard schemas.
+  \textbf{Dgrammar} (right) runs \texttt{compute\_mask} on the incremental FSM
+  state and unmasks an entire block under that mask in one forward pass,
+  overlapped with the next mask computation; the result is deterministic.}
+\end{figure*}
+
+Table~\ref{tab:main} reports aggregate metrics. LAVE reaches 68.8\% validity on $n{=}586$ (nine shards) with median wall time 28.45\,s and P95 78.32\,s. Dgrammar reaches 84.9\% on $n{=}511$ with median 10.23\,s and median effective constraint 20.43\%. DPGrammar reaches 99.2\% validity on the same 511 instances, median 12.87\,s, mean resamples 1.06 versus 32.43 for Dgrammar.
+
+\paragraph{Qualitative observations.}
+Instances where LAVE approaches the timeout often correspond to hard schemas or long generations; Dgrammar avoids sampling variance but can require many greedy resamples when joint structure is wrong, which DPGrammar mitigates. Error modes for DPGrammar on remaining failures include completion phase limits and schemas where minimal JSON fallback is brittle; we leave detailed case studies to appendix space.
+
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Method} &
+  \textbf{Validity} &
+  \textbf{Med.\ time (s)} &
+  \textbf{Mean time (s)} &
+  \textbf{P95 time (s)} &
+  \textbf{Med.\ eff.\ const.\ \%} &
+  \textbf{Mean resamples} \\
+\midrule
+LAVE\,$^\ddagger$ {\scriptsize(reimpl., $n{=}586$)}
+  & 68.8\%        & 28.45 & 34.59          & 78.32  & ---           & 222.6\,$^\S$ \\
+Dgrammar {\scriptsize(async, $n{=}511$)}
+  & 84.9\%        & 10.23 & 13.14          & 32.10  & 20.43         & 32.43 \\
+DPGrammar {\scriptsize(\texttt{dp}, $n{=}511$)}
+  & \textbf{99.2\%} & 12.87 & 14.96          & 28.55 & \textbf{1.22} & \textbf{1.06} \\
+\bottomrule
+\end{tabular}
+\caption{\label{tab:main}%
+  \texttt{jsb\_medium} results (seed 0, $T{=}128$ steps).
+  Dgrammar and DPGrammar are evaluated on the same 511 instances
+  (nine-shard protocol); DPGrammar adds \texttt{dp\_fix\_prefix} on top.
+  LAVE \citep{zhang2026lookaheadthenverifyreliableconstraineddecoding}
+  uses a nine-shard split covering 586 instances.}
+\end{table*}
+
+\noindent$^\ddagger$ LAVE nine-shard evaluation ($n{=}586$); median and P95 reflect sampling based verification cost.\\
+\noindent$^\S$ LAVE resamples count lookahead verification draws, not token re-generations; the concept differs from Dgrammar/DPGrammar resamples.
+
+%% ─── Figure: Why DP boosts validity ─────────────────────────────────────────
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize,>=Latex,
+  tok/.style={draw,rounded corners=1pt,inner sep=2.5pt,minimum height=5.5mm,
+              align=center,font=\scriptsize\ttfamily},
+  ntok/.style={tok},
+  btok/.style={tok,fill=red!12,draw=red!60!black},
+  vtok/.style={tok,fill=green!12,draw=green!55!black},
+  arr/.style={->,thick},
+]
+
+%% ── (1) Violated block ───────────────────────────────────────────────────────
+\node[font=\scriptsize\bfseries,anchor=west,align=left]
+  at (-0.3,0.65)
+  {(1)~After batch unmask — grammar violation at $c$
+   {\normalfont\itshape
+    (schema: \texttt{\{"count":int,\,"label":str\}};\;
+    grammar enforces alphabetical key order)}};
+
+\node[ntok] (a0) at (0,0) {\{};
+\node[btok,right=4pt of a0] (a1) {"label"};
+\node[ntok,right=4pt of a1] (a2) {:};
+\node[ntok,right=4pt of a2] (a3) {"hello"};
+\node[ntok,right=4pt of a3] (a4) {,};
+\node[ntok,right=4pt of a4] (a5) {"count"};
+\node[ntok,right=4pt of a5] (a6) {:};
+\node[ntok,right=4pt of a6] (a7) {5};
+\node[ntok,right=4pt of a7] (a8) {\}};
+
+\draw[arr,red!70!black] (a1.north)++(0,.22) -- (a1.north);
+\node[font=\tiny,red!70!black] at ($(a1.north)+(0,.35)$) {$c$: violator};
+
+\draw[decorate,decoration={brace,amplitude=3pt,mirror},thick,red!55!black]
+  ($(a1.south west)+(0,-0.1)$) --
+  node[below=3pt,font=\scriptsize,red!60!black] {violated span $[c,s)$}
+  ($(a3.south east)+(0,-0.1)$);
+
+%% ── Arrow down ───────────────────────────────────────────────────────────────
+\draw[arr,gray!55] ($(a0)!0.5!(a8)+(0,-0.52)$) -- ++(0,-0.36);
+
+%% ── (2a) Greedy remask (Dgrammar) ────────────────────────────────────────────
+\node[font=\scriptsize\bfseries,anchor=west,red!65!black,align=left]
+  at (-0.3,-1.45)
+  {(2a)~Greedy remask (Dgrammar):\\
+   \normalfont fix only position $c$; remaining tokens from original output are unchanged};
+
+\node[ntok] (b0) at (0,-2.2) {\{};
+\node[vtok,right=4pt of b0] (b1) {"count"};
+\node[ntok,right=4pt of b1] (b2) {:};
+\node[btok,right=4pt of b2] (b3) {"hello"};
+\node[ntok,right=4pt of b3] (b4) {,};
+\node[btok,right=4pt of b4] (b5) {"count"};
+\node[ntok,right=4pt of b5] (b6) {:};
+\node[ntok,right=4pt of b6] (b7) {5};
+\node[ntok,right=4pt of b7] (b8) {\}};
+
+\node[font=\tiny,green!60!black] at ($(b1.north)+(0,.18)$) {fixed};
+\node[font=\tiny,red!70!black]   at ($(b3.north)+(0,.18)$) {str$\neq$int};
+\node[font=\tiny,red!70!black]   at ($(b5.north)+(0,.18)$) {dup key};
+
+\node[draw=red!35,fill=red!5,rounded corners=2pt,font=\scriptsize,
+      text width=2.8cm,align=left,inner sep=3pt,anchor=west]
+  at ($(b8.east)+(0.2,0)$)
+  {Re-violates immediately\\$\Rightarrow$ trigger retry\\
+   \textbf{32.43 avg resamples/inst.}};
+
+%% ── Arrow down ───────────────────────────────────────────────────────────────
+\draw[arr,gray!55] ($(b0)!0.5!(b8)+(0,-0.55)$) -- ++(0,-0.38);
+
+%% ── (2b) DP fix (DPGrammar) ──────────────────────────────────────────────────
+\node[font=\scriptsize\bfseries,anchor=west,green!50!black,align=left]
+  at (-0.3,-3.35)
+  {(2b)~DP fix (\texttt{dp\_fix\_prefix}):\\
+   \normalfont
+   Viterbi over top-$K$ tokens $\times$ grammar DFA states across entire span $[c,s)$};
+
+\node[ntok] (d0) at (0,-4.05) {\{};
+\node[vtok,right=4pt of d0] (d1) {"count"};
+\node[vtok,right=4pt of d1] (d2) {:};
+\node[vtok,right=4pt of d2] (d3) {5};
+\node[vtok,right=4pt of d3] (d4) {,};
+\node[vtok,right=4pt of d4] (d5) {"label"};
+\node[vtok,right=4pt of d5] (d6) {:};
+\node[vtok,right=4pt of d6] (d7) {"hello"};
+\node[vtok,right=4pt of d7] (d8) {\}};
+
+\node[font=\tiny,green!60!black] at ($(d1)!0.5!(d7)+(0,.42)$)
+  {jointly correct key order \emph{and} value types — found in one pass};
+
+\node[draw=green!50!black,fill=green!5,rounded corners=2pt,font=\scriptsize,
+      text width=2.8cm,align=left,inner sep=3pt,anchor=west]
+  at ($(d8.east)+(0.2,0)$)
+  {\textbf{Valid} $\checkmark$\\
+   1.06 avg resamples/inst.\\
+   99.2\% validity};
+\end{tikzpicture}
+\caption{\label{fig:dp-validity-boost}%
+  Why DPGrammar lifts validity from 84.9\,\% (Dgrammar) to 99.2\,\%.
+  \textbf{(1)}~A batch unmask produces \texttt{"label"} before \texttt{"count"},
+  violating the grammar's alphabetical key-order constraint; the violator at
+  position $c$ spans $[c,s)$.
+  \textbf{(2a)}~Dgrammar's greedy remask corrects only $c$: the grammar mask
+  forces \texttt{"count"} there, but the value slot still holds
+  \texttt{"hello"} (a string in an integer field) and the original
+  \texttt{"count"} key remains as a duplicate—causing immediate re-violation
+  and an average of 32.43 resamples per instance (LAVE: 222.6 lookahead
+  draws with similar failure modes on hard schemas).
+  \textbf{(2b)}~\texttt{dp\_fix\_prefix} runs Viterbi over top-$K$ token
+  candidates across every position in $[c,s)$ simultaneously, jointly
+  finding \texttt{"count":5,"label":"hello"}—correct order, correct types,
+  no duplicates—in one pass, reducing to 1.06 avg resamples and 99.2\%
+  validity.}
+\end{figure*}
+
+\section{Discussion}
+
+\paragraph{Interpretation.}
+The gap between LAVE and Dgrammar supports the claim that deterministic frontier parsing with incremental masks is a strong fit for schema constrained JSON under diffusion when sampling based verification is costly or brittle. The gap between Dgrammar and DPGrammar on the same instances isolates the value of joint segment repair beyond greedy remasking.
+
+\paragraph{Strengths.}
+DPGrammar achieves the highest validity and lowest resample churn in our table; Dgrammar offers a simpler system with strong validity gains over LAVE and competitive medians.
+
+\paragraph{Weaknesses and surprises.}
+Effective constraint \% definitions differ in interpretability across methods; DPGrammar's median is low partly because fewer retries occur. Mean and median wall times are close for DPGrammar in our run. DPGrammar validity is below 100\%, so completion and fallback stages still matter.
+
+\paragraph{Implications.}
+Practitioners should report forward versus constraint splits, not only total time. For research, joint repair on violation segments is a lightweight add on relative to full sequence DP \citep{suresh2025dingoconstrainedinferencediffusion}.
+
+\section{Conclusion and Future Work}
+
+We studied grammar constrained decoding for dLLMs with \textbf{Dgrammar}, a frontier incremental system engineered for deterministic alignment and timing visibility, and \textbf{DPGrammar}, which adds segment level Viterbi repair. On \texttt{jsb\_medium}, Dgrammar improves substantially over a reproduced LAVE baseline; DPGrammar improves further over Dgrammar on matched instances. \textbf{Broader takeaway:} structured generation with diffusion needs both algorithmic ideas and systems style measurement; parser grounded frontiers and joint repair are practical levers.
+
+\textbf{Future work} includes evaluating LAVE on the same nine shard split for a strictly controlled three way comparison; extending to additional JSON splits or code grammars; bootstrap confidence intervals; and exploring tighter integration with sparse automata acceleration \citep{su2026vectorizingtrieefficientconstrained} for very large vocabularies.
+
+\section{Limitations}
+
+LAVE and our methods are not evaluated on identical instance sets in Table~\ref{tab:main}, so cross column comparisons involving LAVE are indicative rather than strictly controlled. The validity flag depends on benchmark extraction; functional tests beyond schema syntax are not central here. Hyperparameter tuning was limited; different $T$, block sizes, or temperature could shift outcomes. DPGrammar explores top $K$ tokens per DP position, which can miss globally optimal tokens outside the top $K$. Compute was cloud A100; other hardware changes overlap benefits.
+
+\section{Ethical Considerations}
+
+Structured generation can reduce malformed outputs in downstream automation, but \emph{valid JSON is not always semantically safe or fair}: schemas can encode biased or incomplete coverage of user intent. Models and grammars should be reviewed for misuse in high stakes settings (medical, financial). Our benchmark instances originate from public style schema tasks; they may not represent all languages or cultures. Researchers and deployers should combine syntactic guarantees with content moderation and policy controls. We use open backbone weights and public style evaluation data; users of our code should respect model licenses and avoid deploying unreviewed systems in sensitive domains without human oversight.

@@ -1,26 +1,39 @@
 """
-Compare LAVE, dgrammar (v2_async_ac4), and DP results across offsets.
+Auto-scan results/ and write a comparison.md.
 
-Files:
-  LAVE:     lave_timed_jsb_medium_s0_t128{_offXXX}.jsonl
-  dgrammar: v2_async_ac4_timed_jsb_medium_s0_t128{_offXXX}.jsonl
-  DP:       dp_jsb_medium_s0_t128{_offXXX}.jsonl
+Groups JSONL files by stripping trailing _offNNN shards, merges records
+(dedup by instance_id, last shard wins), computes stats, and writes markdown.
+
+Usage:
+    python bench/compare_results.py
 """
 
 import json
-import os
+import math
+import re
 from collections import defaultdict
 from pathlib import Path
 
 RESULTS_DIR = Path(__file__).parent.parent / "results"
+OUTPUT_MD   = RESULTS_DIR / "comparison.md"
 
-OFFSETS = ["", "_off68", "_off136", "_off204"]
-
-FILE_PATTERNS = {
-    "LAVE":    "lave_timed_jsb_medium_s0_t128{offset}.jsonl",
-    "dgrammar": "v2_async_ac4_timed_jsb_medium_s0_t128{offset}.jsonl",
-    "DP":      "dp_jsb_medium_s0_t128{offset}.jsonl",
+# Human-readable display names keyed on the method field inside records.
+# Falls back to the raw method string if not listed here.
+METHOD_LABELS = {
+    "lave":             "LAVE",
+    "dgrammar_v2_async": "Dgrammar",
+    "dgrammar_dp":      "DPGrammar",
 }
+
+# Preferred display order (others appended alphabetically).
+METHOD_ORDER = ["lave", "dgrammar_v2_async", "dgrammar_dp"]
+
+
+# ── helpers ────────────────────────────────────────────────────────────────────
+
+def _base_name(stem: str) -> str:
+    """Strip trailing _offNNN from a file stem."""
+    return re.sub(r"_off\d+$", "", stem)
 
 
 def load_jsonl(path: Path) -> list[dict]:
@@ -29,161 +42,288 @@ def load_jsonl(path: Path) -> list[dict]:
         for line in f:
             line = line.strip()
             if line:
-                records.append(json.loads(line))
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
     return records
+
+
+def avg(lst):
+    lst = [x for x in lst if x is not None and not math.isnan(x)]
+    return sum(lst) / len(lst) if lst else float("nan")
+
+
+def pct(count, total):
+    return count / total * 100 if total else float("nan")
 
 
 def compute_stats(records: list[dict]) -> dict:
     if not records:
-        return {}
+        return {"n": 0}
 
     n = len(records)
     valid_count = sum(1 for r in records if r.get("valid"))
-    times = [r["time_taken"] for r in records if "time_taken" in r]
-    resamples = [r["resamples"] for r in records if "resamples" in r]
 
-    constraint_pcts = [r["timing"]["constraint_pct"] for r in records if "timing" in r and "constraint_pct" in r["timing"]]
-    eff_constraint_pcts = [r["timing"]["effective_constraint_pct"] for r in records if "timing" in r and "effective_constraint_pct" in r["timing"]]
-    per_tok_total = [r["timing"]["per_token_total_ms"] for r in records if "timing" in r and "per_token_total_ms" in r["timing"]]
-    per_tok_constraint = [r["timing"]["per_token_constraint_ms"] for r in records if "timing" in r and "per_token_constraint_ms" in r["timing"]]
-    forward_counts = [r["timing"]["forward_count"] for r in records if "timing" in r and "forward_count" in r["timing"]]
+    times      = [r["time_taken"]  for r in records if "time_taken"  in r]
+    resamples  = [r["resamples"]   for r in records if "resamples"   in r]
 
-    def avg(lst):
-        return sum(lst) / len(lst) if lst else float("nan")
+    def tget(r, *keys):
+        t = r.get("timing", {})
+        for k in keys:
+            if k in t:
+                return t[k]
+        return None
+
+    fwd_counts   = [x for r in records if (x := tget(r, "forward_count"))       is not None]
+    con_pcts     = [x for r in records if (x := tget(r, "constraint_pct"))       is not None]
+    eff_pcts     = [x for r in records if (x := tget(r, "effective_constraint_pct")) is not None]
+    pt_total     = [x for r in records if (x := tget(r, "per_token_total_ms"))   is not None]
+    pt_con       = [x for r in records if (x := tget(r, "per_token_constraint_ms")) is not None]
+    mask_ms      = [x for r in records if (x := tget(r, "mask_compute_total_ms")) is not None]
+    fwd_ms       = [x for r in records if (x := tget(r, "forward_total_ms", "total_forward_ms")) is not None]
 
     return {
-        "n": n,
-        "valid_rate": valid_count / n,
-        "valid_count": valid_count,
-        "avg_time_s": avg(times),
-        "avg_resamples": avg(resamples),
-        "avg_constraint_pct": avg(constraint_pcts),
-        "avg_eff_constraint_pct": avg(eff_constraint_pcts),
-        "avg_per_tok_total_ms": avg(per_tok_total),
-        "avg_per_tok_constraint_ms": avg(per_tok_constraint),
-        "avg_forward_count": avg(forward_counts),
+        "n":                    n,
+        "valid_count":          valid_count,
+        "valid_rate":           valid_count / n,
+        "avg_time_s":           avg(times),
+        "avg_resamples":        avg(resamples),
+        "avg_fwd_count":        avg(fwd_counts),
+        "avg_constraint_pct":   avg(con_pcts),
+        "avg_eff_constraint_pct": avg(eff_pcts),
+        "avg_pt_total_ms":      avg(pt_total),
+        "avg_pt_con_ms":        avg(pt_con),
+        "avg_mask_ms":          avg(mask_ms),
+        "avg_fwd_ms":           avg(fwd_ms),
     }
 
 
-def print_table(all_stats: dict):
-    methods = list(FILE_PATTERNS.keys())
-    offset_labels = ["base (0)", "off68", "off136", "off204"]
+# ── load & merge ───────────────────────────────────────────────────────────────
 
-    metrics = [
-        ("n", "N samples", "{:.0f}"),
-        ("valid_rate", "Validity (%)", "{:.1%}"),
-        ("avg_time_s", "Avg time (s)", "{:.2f}"),
-        ("avg_resamples", "Avg resamples", "{:.1f}"),
-        ("avg_forward_count", "Avg fwd passes", "{:.1f}"),
-        ("avg_constraint_pct", "Constraint overhead (%)", "{:.1f}"),
-        ("avg_eff_constraint_pct", "Eff. constraint overhead (%)", "{:.1f}"),
-        ("avg_per_tok_total_ms", "Per-token total (ms)", "{:.2f}"),
-        ("avg_per_tok_constraint_ms", "Per-token constraint (ms)", "{:.2f}"),
-    ]
+def load_all() -> dict[str, dict[str, dict]]:
+    """
+    Returns:
+        { base_name -> { instance_id -> record } }
+    """
+    groups: dict[str, dict[str, dict]] = defaultdict(dict)
 
-    print("\n" + "=" * 100)
-    print("COMPARISON: LAVE vs dgrammar vs DP  |  dataset: jsb_medium_s0_t128")
-    print("=" * 100)
+    for path in sorted(RESULTS_DIR.glob("*.jsonl")):
+        base = _base_name(path.stem)
+        records = load_jsonl(path)
+        for rec in records:
+            iid = rec.get("instance_id")
+            if iid:
+                groups[base][iid] = rec  # last shard wins on duplicate
 
-    col_w = 20
+    return groups
 
-    # ── Per-offset breakdown ──────────────────────────────────────────────────
-    for oi, offset in enumerate(OFFSETS):
-        label = offset_labels[oi]
-        print(f"\n{'─'*100}")
-        print(f"  Offset: {label}")
-        print(f"{'─'*100}")
-        header = f"{'Metric':<32}" + "".join(f"{m:>{col_w}}" for m in methods)
-        print(header)
-        print("-" * len(header))
-        for key, display, fmt in metrics:
-            row = f"{display:<32}"
-            for method in methods:
-                val = all_stats[method][offset].get(key, float("nan"))
-                try:
-                    row += f"{fmt.format(val):>{col_w}}"
-                except (ValueError, TypeError):
-                    row += f"{'N/A':>{col_w}}"
-            print(row)
 
-    # ── Combined (all offsets pooled) ─────────────────────────────────────────
-    print(f"\n{'═'*100}")
-    print("  Combined (all 4 offsets pooled)")
-    print(f"{'═'*100}")
-    header = f"{'Metric':<32}" + "".join(f"{m:>{col_w}}" for m in methods)
-    print(header)
-    print("-" * len(header))
+# ── markdown helpers ───────────────────────────────────────────────────────────
 
-    combined: dict[str, list[dict]] = {m: [] for m in methods}
-    for method in methods:
-        for offset in OFFSETS:
-            combined[method].extend(all_stats[method][offset].get("_records", []))
+def _fmt(val, fmt):
+    if val is None or (isinstance(val, float) and math.isnan(val)):
+        return "—"
+    try:
+        return fmt.format(val)
+    except (ValueError, TypeError):
+        return "—"
 
-    combined_stats = {m: compute_stats(recs) for m, recs in combined.items()}
 
-    for key, display, fmt in metrics:
-        row = f"{display:<32}"
-        for method in methods:
-            val = combined_stats[method].get(key, float("nan"))
-            try:
-                row += f"{fmt.format(val):>{col_w}}"
-            except (ValueError, TypeError):
-                row += f"{'N/A':>{col_w}}"
-        print(row)
+def md_table(headers: list[str], rows: list[list[str]]) -> str:
+    widths = [max(len(h), max((len(r[i]) for r in rows), default=0))
+              for i, h in enumerate(headers)]
+    sep   = "| " + " | ".join("-" * w for w in widths) + " |"
+    head  = "| " + " | ".join(h.ljust(widths[i]) for i, h in enumerate(headers)) + " |"
+    lines = [head, sep]
+    for row in rows:
+        lines.append("| " + " | ".join(str(row[i]).ljust(widths[i]) for i in range(len(headers))) + " |")
+    return "\n".join(lines)
 
-    print()
 
+# ── main ───────────────────────────────────────────────────────────────────────
 
 def main():
-    all_stats: dict[str, dict[str, dict]] = defaultdict(dict)
+    groups = load_all()
 
-    for method, pattern in FILE_PATTERNS.items():
-        for offset in OFFSETS:
-            fname = pattern.format(offset=offset)
-            fpath = RESULTS_DIR / fname
-            if not fpath.exists():
-                print(f"[WARN] missing: {fpath}")
-                all_stats[method][offset] = {}
-                continue
-            records = load_jsonl(fpath)
-            stats = compute_stats(records)
-            stats["_records"] = records  # keep for pooling
-            all_stats[method][offset] = stats
+    if not groups:
+        print(f"No JSONL files found in {RESULTS_DIR}")
+        return
 
-    print_table(all_stats)
+    # Identify method key for each group from first record's "method" field.
+    group_method: dict[str, str] = {}
+    for base, recs_by_id in groups.items():
+        first = next(iter(recs_by_id.values()), {})
+        group_method[base] = first.get("method", base)
 
-    # ── Per-instance matched comparison ──────────────────────────────────────
-    print("=" * 100)
-    print("PER-INSTANCE MATCH: valid agreement / disagreement across methods")
-    print("=" * 100)
+    # Sort groups: preferred order first, then alphabetical.
+    def sort_key(base):
+        m = group_method[base]
+        try:
+            return (METHOD_ORDER.index(m), base)
+        except ValueError:
+            return (len(METHOD_ORDER), base)
 
-    all_records_by_method: dict[str, dict[str, dict]] = defaultdict(dict)
-    for method, pattern in FILE_PATTERNS.items():
-        for offset in OFFSETS:
-            for rec in all_stats[method][offset].get("_records", []):
-                iid = rec["instance_id"]
-                all_records_by_method[method][iid] = rec
+    sorted_bases = sorted(groups.keys(), key=sort_key)
 
-    methods = list(FILE_PATTERNS.keys())
-    all_ids = set()
-    for m in methods:
-        all_ids |= set(all_records_by_method[m].keys())
+    # Compute stats per group.
+    stats: dict[str, dict] = {}
+    records_by_group: dict[str, list[dict]] = {}
+    for base in sorted_bases:
+        recs = list(groups[base].values())
+        records_by_group[base] = recs
+        stats[base] = compute_stats(recs)
 
-    agreement = defaultdict(int)
-    for iid in all_ids:
-        valids = tuple(
-            all_records_by_method[m].get(iid, {}).get("valid", None)
-            for m in methods
+    # Display labels.
+    def label(base):
+        m = group_method[base]
+        return METHOD_LABELS.get(m, m)
+
+    labels = [label(b) for b in sorted_bases]
+
+    # ── Build markdown ─────────────────────────────────────────────────────────
+    lines: list[str] = []
+    lines.append("# Results Comparison")
+    lines.append("")
+    lines.append(f"**Dataset:** jsb\\_medium &nbsp;|&nbsp; **Seed:** 0 &nbsp;|&nbsp; **Steps:** 128")
+    lines.append("")
+
+    # ── Summary table ──────────────────────────────────────────────────────────
+    lines.append("## Summary")
+    lines.append("")
+
+    metrics = [
+        ("n",                     "N instances",              "{:d}"),
+        ("valid_count",           "Valid (count)",             "{:d}"),
+        ("valid_rate",            "Validity (%)",              "{:.1%}"),
+        ("avg_time_s",            "Avg time (s)",              "{:.2f}"),
+        ("avg_resamples",         "Avg resamples",             "{:.2f}"),
+        ("avg_fwd_count",         "Avg fwd passes",            "{:.1f}"),
+        ("avg_constraint_pct",    "Constraint overhead (%)",   "{:.2f}"),
+        ("avg_eff_constraint_pct","Eff. constraint (%)",       "{:.2f}"),
+        ("avg_pt_total_ms",       "Per-token total (ms)",      "{:.2f}"),
+        ("avg_pt_con_ms",         "Per-token constraint (ms)", "{:.3f}"),
+        ("avg_mask_ms",           "Avg mask compute (ms)",     "{:.1f}"),
+        ("avg_fwd_ms",            "Avg forward total (ms)",    "{:.1f}"),
+    ]
+
+    headers = ["Metric"] + labels
+    rows = []
+    for key, display, fmt in metrics:
+        row = [display]
+        for base in sorted_bases:
+            row.append(_fmt(stats[base].get(key), fmt))
+        rows.append(row)
+
+    lines.append(md_table(headers, rows))
+    lines.append("")
+
+    # ── Per-instance validity agreement ───────────────────────────────────────
+    lines.append("## Per-instance Validity Agreement")
+    lines.append("")
+    lines.append(
+        "Each row shows a validity pattern across methods "
+        f"({', '.join(labels)}) and how many instances share that pattern."
+    )
+    lines.append("")
+
+    all_ids: set[str] = set()
+    for recs in records_by_group.values():
+        all_ids |= {r["instance_id"] for r in recs}
+
+    rec_lookup: dict[str, dict[str, dict]] = {
+        base: {r["instance_id"]: r for r in recs}
+        for base, recs in records_by_group.items()
+    }
+
+    agreement: dict[tuple, list[str]] = defaultdict(list)
+    for iid in sorted(all_ids):
+        pattern = tuple(
+            rec_lookup[base].get(iid, {}).get("valid", None)
+            for base in sorted_bases
         )
-        agreement[valids] += 1
+        agreement[pattern].append(iid)
 
-    print(f"\n{'Pattern (LAVE, dgrammar, DP)':<35} {'Count':>8}  {'%':>6}")
-    print("-" * 55)
-    for pattern, cnt in sorted(agreement.items(), key=lambda x: -x[1]):
-        label = str(pattern)
-        pct = cnt / len(all_ids) * 100
-        print(f"{label:<35} {cnt:>8}  {pct:>5.1f}%")
-    print(f"\nTotal unique instances: {len(all_ids)}")
+    def pattern_str(pat):
+        def sym(v):
+            if v is True:  return "✓"
+            if v is False: return "✗"
+            return "—"
+        return "  ".join(sym(v) for v in pat)
+
+    agree_headers = ["Pattern (" + " / ".join(labels) + ")", "Count", "%", "Example IDs"]
+    agree_rows = []
+    for pat, ids in sorted(agreement.items(), key=lambda x: -len(x[1])):
+        count = len(ids)
+        pct_val = count / len(all_ids) * 100
+        examples = ", ".join(ids[:3]) + ("…" if len(ids) > 3 else "")
+        agree_rows.append([
+            pattern_str(pat),
+            str(count),
+            f"{pct_val:.1f}%",
+            examples,
+        ])
+
+    lines.append(md_table(agree_headers, agree_rows))
+    lines.append("")
+    lines.append(f"Total unique instances across all files: **{len(all_ids)}**")
+    lines.append("")
+
+    # ── Instances where methods disagree ──────────────────────────────────────
+    if len(sorted_bases) > 1:
+        lines.append("## Disagreement Cases")
+        lines.append("")
+        lines.append("Instances valid for some methods but not others (sorted by instance ID):")
+        lines.append("")
+
+        dis_headers = ["Instance ID"] + labels
+        dis_rows = []
+        for iid in sorted(all_ids):
+            valids = [rec_lookup[base].get(iid, {}).get("valid", None) for base in sorted_bases]
+            truthy = [v for v in valids if v is not None]
+            if truthy and not all(v == truthy[0] for v in truthy):
+                def sym(v):
+                    if v is True:  return "✓"
+                    if v is False: return "✗"
+                    return "—"
+                dis_rows.append([iid] + [sym(v) for v in valids])
+
+        if dis_rows:
+            lines.append(md_table(dis_headers, dis_rows))
+        else:
+            lines.append("_No disagreements found._")
+        lines.append("")
+
+    # ── File inventory ─────────────────────────────────────────────────────────
+    lines.append("## File Inventory")
+    lines.append("")
+    inv_headers = ["Group (base name)", "Method", "Shards", "Total records"]
+    inv_rows = []
+    for base in sorted_bases:
+        shards = sorted(
+            p for p in RESULTS_DIR.glob("*.jsonl")
+            if _base_name(p.stem) == base
+        )
+        n_total = sum(sum(1 for _ in open(s)) for s in shards)
+        inv_rows.append([
+            base,
+            group_method[base],
+            str(len(shards)),
+            str(n_total),
+        ])
+    lines.append(md_table(inv_headers, inv_rows))
+    lines.append("")
+
+    md_content = "\n".join(lines)
+    OUTPUT_MD.write_text(md_content)
+    print(f"Written: {OUTPUT_MD}")
+    print()
+
+    # Also print summary to stdout.
+    for base, lbl in zip(sorted_bases, labels):
+        s = stats[base]
+        print(f"  {lbl:20s}  n={s['n']:4d}  valid={s['valid_rate']:.1%}  "
+              f"time={s['avg_time_s']:.1f}s  resamples={s['avg_resamples']:.1f}")
 
 
 if __name__ == "__main__":
