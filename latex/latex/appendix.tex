@@ -1,0 +1,47 @@
+\appendix
+
+\section{Current experimental result}
+The LAVE procedure is described in Algorithm~\ref{alg:lave}. Table \ref{tab:appendix_runtime_results} summarizes the current results. While the methods achieve promising syntactic validity, the overall performance is not yet compelling, highlighting the need for further advances in algorithm design for this task.
+
+
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+Method & Syntactic & Median Time & Constraint \% \\
+\midrule
+LAVE & 98.40\% & 14.39s & 61.34\% \\
+GGBS & 98.41\% & 14.06s & 12.28\% \\
+\bottomrule
+\end{tabular}
+\caption{Experiment result for LAVE and GGBS.}
+\label{tab:appendix_runtime_results}
+\end{table}
+
+
+\begin{algorithm}[t]
+\caption{LAVE-style constrained decoding (verify-and-resample with masked logits)}
+\label{alg:lave}
+\begin{algorithmic}[1]
+\Require Initial sequence with masks; diffusion schedule; grammar checker;
+  block length $L$; max resamples $R$.
+\Ensure Accepted block tokens or failure after $R$ attempts.
+\For{each diffusion step until stopping}
+  \State Run model forward to obtain logits on masked positions.
+  \State Build grammar mask at the current parser state; mask invalid logits.
+  \State Sample / select tokens on the current frontier (e.g., confidence-based remasking).
+\EndFor
+\State \textbf{// Block check (verification)}
+\For{attempt $r = 1$ to $R$}
+  \State Propose candidate tokens for the next block (e.g., beam / top-$k$ per mask, random completion of remainder).
+  \If{the candidate block is grammar-valid under the checker}
+    \State Commit block; advance parser; \Return success for this block.
+  \Else
+    \State Resample / adjust logits and repeat.
+  \EndIf
+\EndFor
+\State \Return failure for this block.
+\end{algorithmic}
+\end{algorithm}
