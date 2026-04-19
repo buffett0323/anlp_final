@@ -115,9 +115,13 @@ def dp_fix_prefix(
     max_positions: int = 64,
     deviation_penalty: float = 0.0,
     end_pos: Optional[int] = None,
+    include_masked: bool = False,
 ) -> Optional[list[tuple[int, int]]]:
     """Find the highest log-prob grammar-valid token assignment for all non-mask
     positions in x starting at start_pos.
+
+    When include_masked=True, also processes MASK positions (used by the
+    enrichment pass to fill previously-empty [] and {} spans).
 
     Args:
         matcher: LLMatcher at the grammar state just before start_pos.
@@ -144,12 +148,16 @@ def dp_fix_prefix(
     """
     NEG_INF = -math.inf
 
-    # Collect contiguous non-mask positions starting at start_pos.
+    # Collect positions starting at start_pos.
+    # In normal mode: stop at the first MASK token (repair mode).
+    # In include_masked mode: include MASK tokens too (enrichment mode).
     seq_len = x.shape[1]
     hard_end = end_pos if end_pos is not None else seq_len
     positions: list[int] = []
     p = start_pos
-    while p < hard_end and p < seq_len and x[0, p].item() != mask_id:
+    while p < hard_end and p < seq_len:
+        if x[0, p].item() == mask_id and not include_masked:
+            break
         positions.append(p)
         p += 1
 
@@ -198,7 +206,9 @@ def dp_fix_prefix(
                     continue
 
                 orig_tok = x[0, pos].item()
-                new_score = prev_score + lp + (deviation_penalty if tid == orig_tok else 0.0)
+                # Deviation penalty only applies to originally non-mask positions.
+                is_orig = (orig_tok != mask_id and tid == orig_tok)
+                new_score = prev_score + lp + (deviation_penalty if is_orig else 0.0)
                 new_key = bytes(prev_m.compute_logit_bias())
                 prev_m.rollback(1)   # restore prev_m for the next candidate
 
@@ -263,6 +273,125 @@ def _compute_mask_async(checker, vocab_size):
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
     return thread, result
+
+
+# ── Post-generation enrichment ───────────────────────────────────────────────
+
+
+@torch.no_grad()
+def _enrich_empty_brackets(
+    model,
+    x: torch.Tensor,
+    initial_matcher,
+    gen_start: int,
+    mask_id: int,
+    eos_id: int,
+    tokenizer,
+    open_tok_ids: set,
+    close_tok_ids: set,
+    top_k_dp: int,
+    deviation_penalty: float,
+    max_expand: int = 64,
+    stats=None,
+) -> int:
+    """Post-generation pass: find [] and {} in the output, remask them plus
+    trailing eos_id tokens to give the DP room for content, re-run a forward
+    pass, and fill with the highest-probability grammar-valid completion.
+
+    Safe by design: if [] or {} is still the highest-probability valid path
+    (e.g. the schema genuinely requires an empty array), the DP returns [] or {}
+    unchanged.  Returns the number of token positions that were actually changed.
+    """
+    seq_len = x.shape[1]
+
+    # Build open→close bracket token ID map.
+    # Use [-1] to get the actual bracket token, since some tokenizers prepend
+    # a space or BOS token when encoding a standalone character.
+    bracket_pair: dict[int, int] = {}
+    for open_ch, close_ch in [('[', ']'), ('{', '}')]:
+        o_ids = tokenizer.encode(open_ch, add_special_tokens=False)
+        c_ids = tokenizer.encode(close_ch, add_special_tokens=False)
+        if o_ids and c_ids:
+            bracket_pair[o_ids[-1]] = c_ids[-1]
+
+    if not bracket_pair:
+        return 0
+
+    total_changed = 0
+    pos = gen_start
+
+    while pos < seq_len - 1:
+        tid = x[0, pos].item()
+        if tid == mask_id:
+            pos += 1
+            continue
+        expected_close = bracket_pair.get(tid)
+        next_tid = x[0, pos + 1].item()
+        if expected_close is None or next_tid != expected_close:
+            pos += 1
+            continue
+
+        # Found an empty pair ([] or {}) at positions (pos, pos+1).
+        open_pos = pos
+        close_pos = pos + 1
+
+        # Expand the remask window: close bracket + up to max_expand following tokens.
+        # Includes the outer closing bracket and any eos_id filler, giving the DP
+        # space to write real content and properly close the JSON structure.
+        expand_end = close_pos + 1
+        expanded = 0
+        while expand_end < seq_len and expanded < max_expand:
+            t = x[0, expand_end].item()
+            if t == eos_id or t in close_tok_ids:
+                expand_end += 1
+                expanded += 1
+            else:
+                break
+
+        # Back up original tokens in [open_pos, expand_end).
+        x_backup = x[0, open_pos:expand_end].clone()
+
+        # Remask from close_pos (keep open bracket, mask everything after).
+        x[0, close_pos:expand_end] = mask_id
+
+        # Replay grammar matcher to state just after the open bracket.
+        replay_m = initial_matcher.deep_copy()
+        prefix = [x[0, p].item() for p in range(gen_start, open_pos + 1)
+                  if x[0, p].item() != mask_id]
+        replay_m.try_consume_tokens(prefix)
+
+        # Fresh forward pass with the masked window.
+        t_fwd = time.perf_counter()
+        logits = model(x).logits
+        if stats is not None:
+            stats.forward_times.append(time.perf_counter() - t_fwd)
+        log_probs = F.log_softmax(logits.to(torch.float64), dim=-1)
+
+        # DP: fill [close_pos, expand_end) with best grammar-valid content.
+        fixes = dp_fix_prefix(
+            replay_m.deep_copy(),
+            x, close_pos, log_probs, mask_id,
+            top_k=top_k_dp,
+            deviation_penalty=deviation_penalty,
+            end_pos=expand_end,
+            include_masked=True,
+        )
+
+        if fixes is not None and len(fixes) > 0:
+            for fpos, ftok in fixes:
+                x[0, fpos] = ftok
+            # Fill any remaining MASK slots with eos_id.
+            for p in range(close_pos, expand_end):
+                if x[0, p].item() == mask_id:
+                    x[0, p] = eos_id
+            total_changed += len(fixes)
+            pos = expand_end
+        else:
+            # DP returned no changes ([] / {} is still optimal) — restore.
+            x[0, open_pos:expand_end] = x_backup
+            pos += 2
+
+    return total_changed
 
 
 # ── Generation loop ──────────────────────────────────────────────────────────
@@ -367,6 +496,11 @@ def generate_dp(
                     ("]", _close_tok_ids), ("}", _close_tok_ids)]:
         _tids = tokenizer.encode(_ch, add_special_tokens=False)
         _s.update(_tids)
+
+    # Save the grammar matcher state at gen_start (after consuming prompt prefix
+    # but before any generated tokens).  Used by the post-generation enrichment
+    # pass to replay the matcher to any position in the generated region.
+    _initial_matcher = checker.matcher.deep_copy()
 
     # Pending async mask result: (thread, result_holder) or None.
     # Kicked off just before each forward pass; joined just after.
@@ -673,5 +807,17 @@ def generate_dp(
             (j for j, t in enumerate(gen_ids) if t in (eos_id, eot_id)), None
         )
         is_complete = eos_pos is not None and mask_id not in gen_ids[:eos_pos]
+
+    # ── Post-generation enrichment ────────────────────────────────────────────
+    # Find [] and {} in the output and attempt to fill them with richer content.
+    # Each empty span triggers one extra forward pass + DP.  If the model still
+    # prefers [] or {} (e.g. the schema genuinely allows empty), the span is
+    # restored unchanged — the enrichment is strictly non-degrading.
+    _enrich_empty_brackets(
+        model, x, _initial_matcher, gen_start, mask_id, eos_id,
+        tokenizer, _open_tok_ids, _close_tok_ids,
+        top_k_dp=top_k_dp, deviation_penalty=deviation_penalty,
+        stats=stats,
+    )
 
     yield x, resamples, is_complete, total_violations, total_fixes, total_dp_calls, consume_idx
