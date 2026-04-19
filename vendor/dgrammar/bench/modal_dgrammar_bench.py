@@ -58,7 +58,7 @@ RESULTS_VOL = modal.Volume.from_name("dgrammar-results", create_if_missing=True)
 )
 def run_chunk(seed: int, limit: int, offset: int, steps: int, block_ar: int = 1,
               dataset: str = "jsonschema", method: str = "dgrammar",
-              instance_ids: str = ""):
+              instance_ids: str = "", deviation_penalty: float = 0.0):
     import subprocess
     import shutil
     import os
@@ -76,9 +76,9 @@ def run_chunk(seed: int, limit: int, offset: int, steps: int, block_ar: int = 1,
         "python", "/root/run_dgrammar_timed.py",
         str(seed), str(limit), dataset, str(steps), str(offset),
         str(block_ar), method,
+        instance_ids,           # argv[8]: may be empty string
+        str(deviation_penalty), # argv[9]
     ]
-    if instance_ids:
-        cmd.append(instance_ids)
 
     result = subprocess.run(
         cmd,
@@ -114,6 +114,7 @@ def main(
     dataset: str = "jsonschema",
     method: str = "dgrammar",
     instance_ids: str = "",
+    deviation_penalty: float = 0.0,
 ):
     """
     --method dgrammar   original greedy violation-retry (default)
@@ -124,16 +125,16 @@ def main(
     """
     if instance_ids:
         ids_list = instance_ids.split(",")
-        print(f"Running [{method}] on 1x A100: {dataset}, seed={seed}, T={steps}")
+        print(f"Running [{method}] on 1x A100: {dataset}, seed={seed}, T={steps}, deviation_penalty={deviation_penalty}")
         print(f"Instance filter: {ids_list}")
-        handle = run_chunk.spawn(seed, len(ids_list), 0, steps, block_ar, dataset, method, instance_ids)
+        handle = run_chunk.spawn(seed, len(ids_list), 0, steps, block_ar, dataset, method, instance_ids, deviation_penalty)
         result = handle.get()
         print(result)
         return
 
     chunk_size = (total + chunks - 1) // chunks
     mode = "block_ar=32" if block_ar else "full_parallel=256"
-    print(f"Running [{method}] on {chunks}x A100: {dataset}, seed={seed}, T={steps}, {mode}")
+    print(f"Running [{method}] on {chunks}x A100: {dataset}, seed={seed}, T={steps}, {mode}, deviation_penalty={deviation_penalty}")
     print(f"Total={total}, chunk_size={chunk_size}")
 
     handles = []
@@ -143,7 +144,7 @@ def main(
         if limit <= 0:
             break
         print(f"  Chunk {i}: offset={offset}, limit={limit}")
-        handles.append(run_chunk.spawn(seed, limit, offset, steps, block_ar, dataset, method))
+        handles.append(run_chunk.spawn(seed, limit, offset, steps, block_ar, dataset, method, "", deviation_penalty))
 
     for i, handle in enumerate(handles):
         result = handle.get()

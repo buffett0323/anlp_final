@@ -937,6 +937,7 @@ def main():
     instance_ids_filter: set | None = None
     if len(sys.argv) > 8 and sys.argv[8]:
         instance_ids_filter = set(sys.argv[8].split(","))
+    deviation_penalty = float(sys.argv[9]) if len(sys.argv) > 9 else 0.0
 
     if method == "dp":
         tag = "dp"
@@ -1036,7 +1037,8 @@ def main():
                 model, prompt_ids, tokenizer, checker=checker,
                 prompt_len=prompt_len, steps=steps, gen_length=256,
                 block_length=bl, temperature=0.2, remasking="low_confidence",
-                max_batch_size=8, max_resamples=100, max_dp_secs=240.0, **gen_kwargs,
+                max_batch_size=8, max_resamples=100, max_dp_secs=240.0,
+                deviation_penalty=deviation_penalty, **gen_kwargs,
             ):
                 total_violations = violations
                 total_remasks = remasks

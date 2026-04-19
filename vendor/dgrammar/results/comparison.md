@@ -1,42 +1,62 @@
 # Results Comparison
 
-**Dataset:** jsb\_medium &nbsp;|&nbsp; **Seed:** 0 &nbsp;|&nbsp; **Steps:** 128
+## Dataset: jsb_hard
 
-## Summary
+| Metric                    | LAVE   |
+| ------------------------- | ------ |
+| Benchmark total           | 10     |
+| Skipped (grammar-invalid) | 0      |
+| Evaluated (n)             | 10     |
+| Valid (count)             | 3      |
+| Validity (%)              | 30.0%  |
+| Timeouts (>120s)          | 1      |
+| Mean resamples            | 18.60  |
+| Mean time (s)             | 29.11  |
+| Median time (s)           | 0.88   |
+| P95 time (s)              | 93.59  |
+| Max time (s)              | 120.00 |
+
+### Per-instance Validity Agreement
+
+Each row shows a validity pattern across methods (LAVE).
+
+| Pattern (LAVE) | Count | %     | Example IDs             |
+| -------------- | ----- | ----- | ----------------------- |
+| ✗              | 7     | 70.0% | o10293, o10296, o10346… |
+| ✓              | 3     | 30.0% | o10499, o1051, o1052    |
+
+## Dataset: jsb_medium
 
 | Metric                    | LAVE   | Dgrammar | DPGrammar |
 | ------------------------- | ------ | -------- | --------- |
-| N instances               | 511    | 511      | 511       |
-| Valid (count)             | 403    | 434      | 507       |
-| Validity (%)              | 78.9%  | 84.9%    | 99.2%     |
-| Avg time (s)              | 39.48  | 13.14    | 14.96     |
-| Avg resamples             | 255.32 | 32.43    | 1.06      |
-| Avg fwd passes            | 99.2   | 104.7    | 99.4      |
-| Constraint overhead (%)   | 11.95  | 24.25    | 12.67     |
-| Eff. constraint (%)       | —      | 20.43    | 1.22      |
-| Per-token total (ms)      | 111.52 | 100.74   | 71.92     |
-| Per-token constraint (ms) | 6.642  | 8.259    | 0.304     |
-| Avg mask compute (ms)     | —      | 427.2    | 577.0     |
-| Avg forward total (ms)    | 3951.6 | 4611.6   | 4229.0    |
+| Benchmark total           | 586    | 586      | 586       |
+| Skipped (grammar-invalid) | 75     | 75       | 75        |
+| Evaluated (n)             | 511    | 511      | 511       |
+| Valid (count)             | 397    | 434      | 487       |
+| Validity (%)              | 77.7%  | 84.9%    | 95.3%     |
+| Timeouts (>120s)          | 68     | 0        | 0         |
+| Mean resamples            | 233.87 | 32.43    | 2.11      |
+| Mean time (s)             | 41.12  | 13.38    | 15.76     |
+| Median time (s)           | 27.34  | 13.65    | 15.42     |
+| P95 time (s)              | 120.00 | 20.93    | 28.65     |
+| Max time (s)              | 120.05 | 33.45    | 46.46     |
 
-## Per-instance Validity Agreement
+### Per-instance Validity Agreement
 
-Each row shows a validity pattern across methods (LAVE, Dgrammar, DPGrammar) and how many instances share that pattern.
+Each row shows a validity pattern across methods (LAVE, Dgrammar, DPGrammar).
 
 | Pattern (LAVE / Dgrammar / DPGrammar) | Count | %     | Example IDs             |
 | ------------------------------------- | ----- | ----- | ----------------------- |
-| ✓  ✓  ✓                               | 365   | 71.4% | o10217, o10518, o10617… |
-| ✗  ✓  ✓                               | 67    | 13.1% | o10297, o11795, o12286… |
+| ✓  ✓  ✓                               | 347   | 67.9% | o10217, o10518, o10617… |
+| ✗  ✓  ✓                               | 70    | 13.7% | o10297, o11795, o12286… |
 | ✓  ✗  ✓                               | 38    | 7.4%  | o1050, o12241, o13189…  |
-| ✗  ✗  ✓                               | 37    | 7.2%  | o10927, o11689, o11975… |
-| ✗  ✓  ✗                               | 2     | 0.4%  | o44462, o75601          |
-| ✗  ✗  ✗                               | 2     | 0.4%  | o5462, o83287           |
+| ✗  ✗  ✓                               | 32    | 6.3%  | o10927, o11689, o11975… |
+| ✓  ✓  ✗                               | 11    | 2.2%  | o24180, o26197, o30006… |
+| ✗  ✗  ✗                               | 6     | 1.2%  | o27216, o27789, o33011… |
+| ✗  ✓  ✗                               | 6     | 1.2%  | o33928, o33932, o40220… |
+| ✓  ✗  ✗                               | 1     | 0.2%  | o30439                  |
 
-Total unique instances across all files: **511**
-
-## Disagreement Cases
-
-Instances valid for some methods but not others (sorted by instance ID):
+### Disagreement Cases
 
 | Instance ID | LAVE | Dgrammar | DPGrammar |
 | ----------- | ---- | -------- | --------- |
@@ -65,42 +85,56 @@ Instances valid for some methods but not others (sorted by instance ID):
 | o21225      | ✓    | ✗        | ✓         |
 | o21285      | ✗    | ✓        | ✓         |
 | o21846      | ✓    | ✗        | ✓         |
-| o25768      | ✗    | ✓        | ✓         |
-| o26111      | ✗    | ✓        | ✓         |
+| o24180      | ✓    | ✓        | ✗         |
+| o26197      | ✓    | ✓        | ✗         |
 | o26594      | ✓    | ✗        | ✓         |
-| o27216      | ✗    | ✗        | ✓         |
 | o27362      | ✗    | ✗        | ✓         |
-| o27789      | ✗    | ✗        | ✓         |
-| o30439      | ✓    | ✗        | ✓         |
+| o29812      | ✗    | ✓        | ✓         |
+| o30006      | ✓    | ✓        | ✗         |
+| o30180      | ✓    | ✓        | ✗         |
+| o30439      | ✓    | ✗        | ✗         |
+| o30701      | ✓    | ✓        | ✗         |
+| o30758      | ✗    | ✓        | ✓         |
 | o30761      | ✗    | ✓        | ✓         |
 | o30877      | ✗    | ✗        | ✓         |
 | o31090      | ✗    | ✓        | ✓         |
 | o31100      | ✗    | ✓        | ✓         |
 | o31136      | ✗    | ✓        | ✓         |
 | o31835      | ✗    | ✓        | ✓         |
-| o33011      | ✗    | ✗        | ✓         |
-| o33928      | ✗    | ✓        | ✓         |
-| o33932      | ✗    | ✓        | ✓         |
+| o33928      | ✗    | ✓        | ✗         |
+| o33932      | ✗    | ✓        | ✗         |
 | o34336      | ✓    | ✗        | ✓         |
 | o36073      | ✗    | ✓        | ✓         |
 | o36440      | ✗    | ✓        | ✓         |
+| o37721      | ✗    | ✓        | ✓         |
 | o3907       | ✓    | ✗        | ✓         |
+| o39078      | ✗    | ✓        | ✓         |
+| o39137      | ✓    | ✓        | ✗         |
+| o393        | ✗    | ✓        | ✓         |
 | o39500      | ✓    | ✗        | ✓         |
+| o39780      | ✓    | ✓        | ✗         |
+| o40220      | ✗    | ✓        | ✗         |
 | o41780      | ✗    | ✗        | ✓         |
 | o41800      | ✗    | ✓        | ✓         |
 | o4264       | ✓    | ✗        | ✓         |
 | o42985      | ✗    | ✗        | ✓         |
+| o43729      | ✗    | ✓        | ✓         |
 | o44206      | ✗    | ✓        | ✓         |
-| o44258      | ✗    | ✗        | ✓         |
 | o44462      | ✗    | ✓        | ✗         |
-| o45752      | ✗    | ✓        | ✓         |
+| o44947      | ✓    | ✓        | ✗         |
+| o45199      | ✗    | ✓        | ✓         |
+| o45200      | ✗    | ✓        | ✓         |
+| o45752      | ✗    | ✓        | ✗         |
 | o45806      | ✓    | ✗        | ✓         |
 | o47263      | ✗    | ✓        | ✓         |
 | o48073      | ✗    | ✓        | ✓         |
 | o48116      | ✗    | ✗        | ✓         |
-| o48339      | ✗    | ✗        | ✓         |
+| o48339      | ✓    | ✗        | ✓         |
+| o4850       | ✓    | ✓        | ✗         |
+| o49232      | ✓    | ✓        | ✗         |
 | o49732      | ✗    | ✓        | ✓         |
 | o5165       | ✗    | ✓        | ✓         |
+| o5223       | ✓    | ✓        | ✗         |
 | o52827      | ✗    | ✗        | ✓         |
 | o5344       | ✗    | ✗        | ✓         |
 | o5352       | ✓    | ✗        | ✓         |
@@ -185,10 +219,48 @@ Instances valid for some methods but not others (sorted by instance ID):
 | o9932       | ✗    | ✗        | ✓         |
 | o9944       | ✓    | ✗        | ✓         |
 
+## Dataset: jsonschema
+
+| Metric                    | LAVE   |
+| ------------------------- | ------ |
+| Benchmark total           | 10     |
+| Skipped (grammar-invalid) | 0      |
+| Evaluated (n)             | 10     |
+| Valid (count)             | 10     |
+| Validity (%)              | 100.0% |
+| Timeouts (>120s)          | 0      |
+| Mean resamples            | 0.20   |
+| Mean time (s)             | 7.17   |
+| Median time (s)           | 6.46   |
+| P95 time (s)              | 12.95  |
+| Max time (s)              | 13.23  |
+
+### Per-instance Validity Agreement
+
+Each row shows a validity pattern across methods (LAVE).
+
+| Pattern (LAVE) | Count | %      | Example IDs                                |
+| -------------- | ----- | ------ | ------------------------------------------ |
+| ✓              | 10    | 100.0% | jsonschema_0, jsonschema_1, jsonschema_10… |
+
 ## File Inventory
 
-| Group (base name)                     | Method            | Shards | Total records |
-| ------------------------------------- | ----------------- | ------ | ------------- |
-| lave_timed_jsb_medium_s0_t128         | lave              | 9      | 586           |
-| v2_async_ac4_timed_jsb_medium_s0_t128 | dgrammar_v2_async | 9      | 511           |
-| dp_jsb_medium_s0_t128                 | dgrammar_dp       | 9      | 511           |
+| Group (base name)                             | Method                                        | Dataset    | Shards | Records |
+| --------------------------------------------- | --------------------------------------------- | ---------- | ------ | ------- |
+| lave_timed_jsb_hard_s0_t128                   | lave                                          | jsb_hard   | 1      | 10      |
+| lave_timed_jsb_medium_s0_t128                 | lave                                          | jsb_medium | 12     | 790     |
+| lave_timed_jsonschema_s0_t128                 | lave                                          | jsonschema | 1      | 10      |
+| v2_async_ac4_timed_jsb_medium_s0_t128         | dgrammar_v2_async                             | jsb_medium | 12     | 691     |
+| dp_jsb_medium_s0_t128                         | dgrammar_dp                                   | jsb_medium | 12     | 691     |
+| dp_jsb_medium_s1_t128                         | dgrammar_dp                                   | jsb_medium | 1      | 3       |
+| exp_A_jsb_medium_s0_t128                      | exp_A_jsb_medium_s0_t128                      | jsb_medium | 1      | 16      |
+| exp_B_jsb_medium_s0_t128                      | exp_B_jsb_medium_s0_t128                      | jsb_medium | 2      | 20      |
+| lave_combined_timed_jsb_hard_s0_t128          | lave_combined                                 | jsb_hard   | 2      | 14      |
+| lave_combined_timed_jsonschema_s0_t128        | lave_combined                                 | jsonschema | 1      | 10      |
+| lave_dir1_timed_jsonschema_s0_t128            | lave_dir1                                     | jsonschema | 1      | 10      |
+| lave_dir2_timed_jsonschema_s0_t128            | lave_dir2                                     | jsonschema | 1      | 10      |
+| lave_dir3_timed_jsonschema_s0_t128            | lave_dir3                                     | jsonschema | 1      | 10      |
+| lave_dir4_timed_jsonschema_s0_t128            | lave_dir4                                     | jsonschema | 1      | 10      |
+| lave_fn_detection_jsb_hard_s0_t128_oml12      | lave_fn_detection_jsb_hard_s0_t128_oml12      | jsb_hard   | 1      | 10      |
+| lave_fn_detection_jsonschema_s0_t128_oml12    | lave_fn_detection_jsonschema_s0_t128_oml12    | jsonschema | 1      | 10      |
+| lave_oracle_validate_jsb_medium_s0_t128_oml12 | lave_oracle_validate_jsb_medium_s0_t128_oml12 | jsb_medium | 1      | 6       |

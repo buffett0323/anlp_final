@@ -36,6 +36,75 @@ from dgrammar.generate import add_gumbel_noise, get_num_transfer_tokens
 # ── Core DP ──────────────────────────────────────────────────────────────────
 
 
+def find_constraint_end(
+    matcher,
+    x: torch.Tensor,
+    start_pos: int,
+    mask_id: int,
+    max_lookahead: int = 48,
+    open_tok_ids: Optional[set] = None,
+    close_tok_ids: Optional[set] = None,
+    init_depth: int = 0,
+) -> int:
+    """Find the end of the violated constraint starting at start_pos.
+
+    Probes forward using the grammar automaton with a deep copy of the matcher.
+    Bracket depth is tracked using the ORIGINAL tokens in x (not probe substitute
+    tokens), starting from init_depth (computed by the caller by scanning the
+    already-consumed prefix from gen_start to start_pos).
+
+    Junction condition: original token accepted by grammar AND bracket depth == 0
+    after processing that token.  This prevents the DP span from stopping inside
+    an unclosed array or object (which would allow the DP to collapse the
+    remainder to [] or {}).
+
+    Returns the exclusive end position c_end such that DP runs on
+    [start_pos, c_end) and original tokens [c_end, ...) are kept.
+    Falls back to start_pos + max_lookahead if no junction found.
+    """
+    seq_len = x.shape[1]
+    probe = matcher.deep_copy()
+    end = min(seq_len, start_pos + max_lookahead)
+    depth = init_depth   # net unclosed brackets (accurate from caller's backward scan)
+
+    for pos in range(start_pos, end):
+        tid = x[0, pos].item()
+        if tid == mask_id:
+            break
+
+        # Update depth from the ORIGINAL token first, before checking junction.
+        # This prevents stopping at `[` or `{` (depth just went up), and allows
+        # stopping at `]` / `}` that closes back to depth 0.
+        if open_tok_ids and tid in open_tok_ids:
+            depth += 1
+        elif close_tok_ids and tid in close_tok_ids:
+            depth = max(0, depth - 1)
+
+        consumed = probe.try_consume_tokens([tid])
+        if consumed == 1:
+            # Original token accepted by grammar.
+            if depth == 0:
+                # Depth just returned to 0 (or was never in a bracket) — safe junction.
+                return pos
+            # Still inside an open bracket — keep scanning.
+        else:
+            probe.rollback(0)
+            # Original token rejected — advance probe with any valid token to keep
+            # the automaton state moving.  We do NOT update depth here because the
+            # substitute token is artificial; depth tracking uses only original tokens.
+            advanced = False
+            for candidate in range(256):
+                c2 = probe.try_consume_tokens([candidate])
+                if c2 == 1:
+                    advanced = True
+                    break
+                probe.rollback(0)
+            if not advanced:
+                break
+
+    return min(end, seq_len)
+
+
 def dp_fix_prefix(
     matcher,
     x: torch.Tensor,
@@ -44,6 +113,8 @@ def dp_fix_prefix(
     mask_id: int,
     top_k: int = 50,
     max_positions: int = 64,
+    deviation_penalty: float = 0.0,
+    end_pos: Optional[int] = None,
 ) -> Optional[list[tuple[int, int]]]:
     """Find the highest log-prob grammar-valid token assignment for all non-mask
     positions in x starting at start_pos.
@@ -56,6 +127,15 @@ def dp_fix_prefix(
         log_probs: Log-softmax probabilities, shape [1, seq_len, vocab_size].
         mask_id: Token ID for the MASK token.
         top_k: Number of top-scoring tokens to explore at each position.
+        deviation_penalty: Bonus log-prob added when the chosen token matches the
+            original token x[0, pos].  A positive value (e.g. 2.0–5.0) biases the
+            DP toward preserving the model's original content and only changing
+            tokens that are grammatically forced to change.  0.0 (default) gives
+            the original behaviour.
+        end_pos: Exclusive upper bound for the DP span. When provided (from
+            find_constraint_end), the DP operates only on [start_pos, end_pos)
+            and the caller resumes greedy extension from end_pos onwards.
+            If None, the span extends to the next mask token (original behaviour).
 
     Returns:
         List of (position, new_token_id) for positions where the optimal token
@@ -66,9 +146,10 @@ def dp_fix_prefix(
 
     # Collect contiguous non-mask positions starting at start_pos.
     seq_len = x.shape[1]
+    hard_end = end_pos if end_pos is not None else seq_len
     positions: list[int] = []
     p = start_pos
-    while p < seq_len and x[0, p].item() != mask_id:
+    while p < hard_end and p < seq_len and x[0, p].item() != mask_id:
         positions.append(p)
         p += 1
 
@@ -116,7 +197,8 @@ def dp_fix_prefix(
                     prev_m.rollback(0)   # safe no-op via checker.rollback guard
                     continue
 
-                new_score = prev_score + lp
+                orig_tok = x[0, pos].item()
+                new_score = prev_score + lp + (deviation_penalty if tid == orig_tok else 0.0)
                 new_key = bytes(prev_m.compute_logit_bias())
                 prev_m.rollback(1)   # restore prev_m for the next candidate
 
@@ -228,6 +310,7 @@ def generate_dp(
     max_resamples: int = 100,
     top_k_dp: int = 100,
     max_dp_secs: float = 300.0,
+    deviation_penalty: float = 0.0,
     stats=None,
 ):
     """Dgrammar with DP-based violation correction + async mask overlap.
@@ -274,6 +357,16 @@ def generate_dp(
     total_dp_calls = 0
     total_fixes = 0
     resamples = []
+
+    # Precompute structural bracket token IDs for depth tracking in find_constraint_end.
+    # This prevents the DP span from stopping inside an unclosed [ or { (array/object),
+    # which would allow the DP to collapse the remainder to [] or {}.
+    _open_tok_ids: set = set()
+    _close_tok_ids: set = set()
+    for _ch, _s in [("[", _open_tok_ids), ("{", _open_tok_ids),
+                    ("]", _close_tok_ids), ("}", _close_tok_ids)]:
+        _tids = tokenizer.encode(_ch, add_special_tokens=False)
+        _s.update(_tids)
 
     # Pending async mask result: (thread, result_holder) or None.
     # Kicked off just before each forward pass; joined just after.
@@ -432,8 +525,35 @@ def generate_dp(
                         continue
 
                     # ── DP violation fix ─────────────────────────────────────
-                    # The checker state is right before the violator. Run DP on
-                    # the entire contiguous non-mask segment from that point.
+                    # Narrow the DP span to just the violated constraint window
+                    # [consume_idx, constraint_end), then resume greedy from
+                    # constraint_end onwards.  This preserves the model's original
+                    # tokens after the constraint boundary (e.g. surrounding JSON
+                    # structure after a bad UUID string), avoiding degenerate
+                    # collapses to [] or {} that occur when the DP spans too far.
+                    # Compute bracket depth at consume_idx by scanning the
+                    # already-consumed prefix [gen_start, consume_idx).
+                    # This gives find_constraint_end the correct initial depth
+                    # so it won't stop inside an unclosed [ or {.
+                    _init_depth = 0
+                    for _bp in range(gen_start, consume_idx):
+                        _btid = x[0, _bp].item()
+                        if _btid == mask_id:
+                            continue
+                        if _btid in _open_tok_ids:
+                            _init_depth += 1
+                        elif _btid in _close_tok_ids:
+                            _init_depth = max(0, _init_depth - 1)
+
+                    constraint_end = find_constraint_end(
+                        checker.matcher.deep_copy(),
+                        x, consume_idx, mask_id,
+                        open_tok_ids=_open_tok_ids,
+                        close_tok_ids=_close_tok_ids,
+                        init_depth=_init_depth,
+                    )
+
+                    # Full segment end (next mask) — used for post-DP greedy resume.
                     seg_end = consume_idx
                     while seg_end < x.shape[1] and x[0, seg_end].item() != mask_id:
                         seg_end += 1
@@ -441,10 +561,12 @@ def generate_dp(
                     total_dp_calls += 1
                     dp_succeeded = False
 
-                    if seg_end > consume_idx:
+                    if constraint_end > consume_idx:
                         fixes = dp_fix_prefix(
                             checker.matcher.deep_copy(),
                             x, consume_idx, log_probs, mask_id, top_k=top_k_dp,
+                            deviation_penalty=deviation_penalty,
+                            end_pos=constraint_end,
                         )
 
                         if fixes is not None:
@@ -452,15 +574,16 @@ def generate_dp(
                                 x[0, fpos] = ftok
                             total_fixes += len(fixes)
                             if trace and fixes:
-                                print(f"  DP fixed {len(fixes)} pos: "
+                                print(f"  DP fixed {len(fixes)} pos in [{consume_idx-gen_start},{constraint_end-gen_start}): "
                                       f"{[(p - gen_start, ftok) for p, ftok in fixes]}")
 
-                            seg_tokens = [x[0, p].item() for p in range(consume_idx, seg_end)]
-                            c = checker.matcher.try_consume_tokens(seg_tokens)
+                            # Advance matcher over the DP-fixed window [consume_idx, constraint_end).
+                            dp_tokens = [x[0, p].item() for p in range(consume_idx, constraint_end)]
+                            c = checker.matcher.try_consume_tokens(dp_tokens)
                             consume_idx += c
-                            dp_succeeded = True   # DP ran — don't fall through to raw fallback
-                            if c < len(seg_tokens):
-                                # Partial advance: remask the stall position and let model retry.
+
+                            if c < len(dp_tokens):
+                                # DP window still has a violation — remask and retry.
                                 x[0, consume_idx] = mask_id
                                 resamples.append((consume_idx, time.monotonic() - start_time))
                                 tokens_placed_this_step -= 1
@@ -470,6 +593,26 @@ def generate_dp(
                                 if len(resamples) >= max_resamples:
                                     yield x, resamples, False, total_violations, total_fixes, total_dp_calls, consume_idx
                                     return
+                            else:
+                                # DP window clean — greedily resume from constraint_end
+                                # to consume any original tokens that are now valid.
+                                resume_tokens = [x[0, p].item() for p in range(consume_idx, seg_end)]
+                                if resume_tokens:
+                                    c2 = checker.matcher.try_consume_tokens(resume_tokens)
+                                    consume_idx += c2
+                                    if c2 < len(resume_tokens):
+                                        # A later token violates — remask it.
+                                        x[0, consume_idx] = mask_id
+                                        resamples.append((consume_idx, time.monotonic() - start_time))
+                                        tokens_placed_this_step -= 1
+                                        if stats is not None:
+                                            stats.resample_count += 1
+                                            stats.tokens_unmasked -= 1
+                                        if len(resamples) >= max_resamples:
+                                            yield x, resamples, False, total_violations, total_fixes, total_dp_calls, consume_idx
+                                            return
+
+                            dp_succeeded = True
 
                     if not dp_succeeded:
                         # DP found no valid path: fall back to remasking the violator
