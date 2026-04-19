@@ -10,7 +10,7 @@ After processing all positions, the algorithm backtracks from the best final sta
 Matcher clones are created only once per surviving DFA state per step (Phase~2), keeping memory overhead proportional to the grammar's state count rather than to $K$.
 
 \IfFileExists{algpseudocode.sty}{
-\begin{algorithm}[t]
+\begin{algorithm*}[t]
 \caption{DPGrammar: Viterbi segment repair over a violated span (\texttt{dp\_fix\_prefix})}
 \label{alg:dpgrammar}
 \begin{algorithmic}[1]
@@ -50,7 +50,7 @@ Matcher clones are created only once per surviving DFA state per step (Phase~2),
 \EndFor
 \State \Return $\operatorname{reverse}(\mathit{fixes})$
 \end{algorithmic}
-\end{algorithm}
+\end{algorithm*}
 }{}
 
 \section{Hyperparameters}
@@ -72,7 +72,7 @@ Block length                 & 32 \\
 Remasking strategy           & Low-confidence \\
 Temperature                  & 0.2 \\
 Top-$K$ (DPGrammar DP)       & 50 \\
-Max resample attempts        & 500 (LAVE), 200 (Dgrammar/DPGrammar) \\
+Max resample attempts        & 500 (LAVE), 200 (ours) \\
 Timeout threshold            & 120\,s \\
 \bottomrule
 \end{tabular}
@@ -98,7 +98,7 @@ Forward time dominates in all cases; constraint overhead is a small fraction for
 LAVE's higher mean time is driven by the 73 timeout instances (capped at 120\,s); its median is lower because
 the majority of instances either succeed quickly or fail early.
 
-\begin{table}[h]
+\begin{table*}[h]
 \centering
 \small
 \begin{tabular}{lrrr}
@@ -117,4 +117,4 @@ Avg forward total (ms)      & 3951  & 4612  & 4229  \\
 \caption{Detailed timing breakdown on \texttt{jsb\_medium} ($n{=}511$ matched instances).
 Effective constraint \% is not available for LAVE as it lacks the same instrumentation.}
 \label{tab:timing}
-\end{table}
+\end{table*}
