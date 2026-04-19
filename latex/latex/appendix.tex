@@ -1,47 +1,120 @@
 \appendix
 
-\section{Current experimental result}
-The LAVE procedure is described in Algorithm~\ref{alg:lave}. Table \ref{tab:appendix_runtime_results} summarizes the current results. While the methods achieve promising syntactic validity, the overall performance is not yet compelling, highlighting the need for further advances in algorithm design for this task.
+\section{DPGrammar Algorithm (\texttt{dp\_fix\_prefix})}
+\label{app:alg}
 
+Algorithm~\ref{alg:dpgrammar} gives the full pseudocode for the Viterbi segment repair used by DPGrammar.
+Given the violated span $[c,s)$, the algorithm maintains a set of live DFA states (each paired with its highest cumulative log-probability path) and advances them token by token using the top-$K$ vocabulary entries from the current forward pass.
+When two paths arrive at the same DFA state, the lower-scoring one is pruned (Viterbi merge).
+After processing all positions, the algorithm backtracks from the best final state to recover the replacement token sequence.
+Matcher clones are created only once per surviving DFA state per step (Phase~2), keeping memory overhead proportional to the grammar's state count rather than to $K$.
 
-
-\begin{table}[t]
-\centering
-\small
-\begin{tabular}{lccc}
-\toprule
-Method & Syntactic & Median Time & Constraint \% \\
-\midrule
-LAVE & 98.40\% & 14.39s & 61.34\% \\
-GGBS & 98.41\% & 14.06s & 12.28\% \\
-\bottomrule
-\end{tabular}
-\caption{Experiment result for LAVE and GGBS.}
-\label{tab:appendix_runtime_results}
-\end{table}
-
-
+\IfFileExists{algpseudocode.sty}{
 \begin{algorithm}[t]
-\caption{LAVE-style constrained decoding (verify-and-resample with masked logits)}
-\label{alg:lave}
+\caption{DPGrammar: Viterbi segment repair over a violated span (\texttt{dp\_fix\_prefix})}
+\label{alg:dpgrammar}
 \begin{algorithmic}[1]
-\Require Initial sequence with masks; diffusion schedule; grammar checker;
-  block length $L$; max resamples $R$.
-\Ensure Accepted block tokens or failure after $R$ attempts.
-\For{each diffusion step until stopping}
-  \State Run model forward to obtain logits on masked positions.
-  \State Build grammar mask at the current parser state; mask invalid logits.
-  \State Sample / select tokens on the current frontier (e.g., confidence-based remasking).
+\Require Violated span $[c,s)$; log-probabilities $\ell \in \mathbb{R}^{L \times |V|}$ from the current forward; grammar matcher $\mathcal{M}$ at the DFA state just before $c$; beam width $K$
+\Ensure Replacement pairs $\{(p_i, t_i)\}$ maximising $\sum \log p(t_i)$ subject to grammar, or \textsc{Fail}
+\State $P \gets [c,\, c{+}1,\, \ldots,\, s{-}1]$
+\State $\mathit{states} \gets \{\operatorname{key}(\mathcal{M}) \mapsto (\mathcal{M},\ 0)\}$ \Comment{DFA-state $\to$ (matcher, cumulative log-prob)}
+\State $\mathit{back} \gets \{\}$ \Comment{backtrack table}
+\For{$i \gets 0$ \textbf{to} $|P|-1$}
+    \State $T_K \gets \operatorname{top\text{-}K}(\ell[P[i]],\; k{=}K)$
+    \State $\mathit{winners} \gets \{\}$
+    \For{\textbf{each} $(\text{prev\_key},\, (\mathcal{M}_p,\, \sigma_p))$ \textbf{in} $\mathit{states}$}
+        \For{\textbf{each} $(t,\, \ell_t)$ \textbf{in} $T_K$}
+            \If{$\mathcal{M}_p.\operatorname{try\_consume}([t]) < 1$}
+                \State $\mathcal{M}_p.\operatorname{rollback}(0)$; \textbf{continue}
+            \EndIf
+            \State $\sigma' \gets \sigma_p + \ell_t$;\quad $k' \gets \operatorname{key}(\mathcal{M}_p)$
+            \State $\mathcal{M}_p.\operatorname{rollback}(1)$
+            \If{$k' \notin \mathit{winners}$ \textbf{or} $\mathit{winners}[k'].\sigma < \sigma'$}
+                \State $\mathit{winners}[k'] \gets (\text{prev\_key},\; t,\; \sigma')$ \Comment{Viterbi merge}
+            \EndIf
+        \EndFor
+    \EndFor
+    \If{$\mathit{winners} = \emptyset$}\ \Return \textsc{Fail} \EndIf
+    \State $\mathit{next} \gets \{\}$
+    \For{\textbf{each} $(k',\, (\text{prev\_key},\, t,\, \sigma'))$ \textbf{in} $\mathit{winners}$} \Comment{Phase 2: clone once per surviving state}
+        \State $\mathcal{M}' \gets \mathit{states}[\text{prev\_key}].\mathcal{M}.\operatorname{deep\_copy}()$;\quad $\mathcal{M}'.\operatorname{try\_consume}([t])$
+        \State $\mathit{next}[k'] \gets (\mathcal{M}',\; \sigma')$;\quad $\mathit{back}[(i,\,k')] \gets (\text{prev\_key},\; t)$
+    \EndFor
+    \State $\mathit{states} \gets \mathit{next}$
 \EndFor
-\State \textbf{// Block check (verification)}
-\For{attempt $r = 1$ to $R$}
-  \State Propose candidate tokens for the next block (e.g., beam / top-$k$ per mask, random completion of remainder).
-  \If{the candidate block is grammar-valid under the checker}
-    \State Commit block; advance parser; \Return success for this block.
-  \Else
-    \State Resample / adjust logits and repeat.
-  \EndIf
+\State $k^* \gets \arg\max_k\; \mathit{states}[k].\sigma$;\quad $\mathit{fixes} \gets []$;\quad $\text{cur} \gets k^*$
+\For{$i \gets |P|-1$ \textbf{downto} $0$}
+    \State $(\text{prev},\; t) \gets \mathit{back}[(i,\;\text{cur})]$
+    \If{$t \neq x[P[i]]$}\ $\mathit{fixes}.\operatorname{append}(P[i],\; t)$ \EndIf
+    \State $\text{cur} \gets \text{prev}$
 \EndFor
-\State \Return failure for this block.
+\State \Return $\operatorname{reverse}(\mathit{fixes})$
 \end{algorithmic}
 \end{algorithm}
+}{}
+
+\section{Hyperparameters}
+\label{app:hyperparams}
+
+All experiments use LLaDA-8B-Instruct as the backbone, run on Modal with NVIDIA A100 GPUs.
+Table~\ref{tab:hyperparams} lists the shared settings across all three methods.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{ll}
+\toprule
+\textbf{Hyperparameter} & \textbf{Value} \\
+\midrule
+Diffusion steps $T$          & 128 \\
+Random seed                  & 0 \\
+Block length                 & 32 \\
+Remasking strategy           & Low-confidence \\
+Temperature                  & 0.2 \\
+Top-$K$ (DPGrammar DP)       & 50 \\
+Max resample attempts        & 500 (LAVE), 200 (Dgrammar/DPGrammar) \\
+Timeout threshold            & 120\,s \\
+\bottomrule
+\end{tabular}
+\caption{Shared hyperparameters for all benchmark runs on \texttt{jsb\_medium}.}
+\label{tab:hyperparams}
+\end{table}
+
+\section{Dataset and Instance Filtering}
+\label{app:data}
+
+We evaluate on the \texttt{Github\_medium} split of JSONSchemaBench, which contains 586 instances.
+Of these, 75 are excluded from all comparisons because \textsc{llguidance} rejects their schemas at compile time:
+LAVE immediately returns \texttt{valid=false} with the error \texttt{"Prompt does not conform to grammar"};
+Dgrammar and DPGrammar silently skip them via the same \textsc{llguidance} guard.
+Since all three methods behave identically on these 75 instances, including them would only inflate LAVE's failure count without providing a meaningful comparison.
+All results in Table~\ref{tab:main} are therefore reported on the matched $n{=}511$ subset.
+
+\section{Timing Breakdown}
+\label{app:timing}
+
+Table~\ref{tab:timing} reports additional per-method timing statistics not included in the main table.
+Forward time dominates in all cases; constraint overhead is a small fraction for Dgrammar and DPGrammar.
+LAVE's higher mean time is driven by the 73 timeout instances (capped at 120\,s); its median is lower because
+the majority of instances either succeed quickly or fail early.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Metric} & \textbf{LAVE} & \textbf{Dgrammar} & \textbf{DPGrammar} \\
+\midrule
+Avg fwd passes              & 99.2  & 104.7 & 99.4  \\
+Constraint overhead (\%)    & 11.95 & 24.25 & 12.67 \\
+Eff.\ constraint (\%)       & —     & 20.43 & 1.22  \\
+Per-token total (ms)        & 111.5 & 100.7 & 71.9  \\
+Per-token constraint (ms)   & 6.64  & 8.26  & 0.30  \\
+Avg mask compute (ms)       & —     & 427.2 & 577.0 \\
+Avg forward total (ms)      & 3951  & 4612  & 4229  \\
+\bottomrule
+\end{tabular}
+\caption{Detailed timing breakdown on \texttt{jsb\_medium} ($n{=}511$ matched instances).
+Effective constraint \% is not available for LAVE as it lacks the same instrumentation.}
+\label{tab:timing}
+\end{table}

@@ -6,11 +6,11 @@
 
 | Metric                    | LAVE   | Dgrammar | DPGrammar |
 | ------------------------- | ------ | -------- | --------- |
-| N instances               | 586    | 511      | 511       |
+| N instances               | 511    | 511      | 511       |
 | Valid (count)             | 403    | 434      | 507       |
-| Validity (%)              | 68.8%  | 84.9%    | 99.2%     |
-| Avg time (s)              | 34.59  | 13.14    | 14.96     |
-| Avg resamples             | 222.64 | 32.43    | 1.06      |
+| Validity (%)              | 78.9%  | 84.9%    | 99.2%     |
+| Avg time (s)              | 39.48  | 13.14    | 14.96     |
+| Avg resamples             | 255.32 | 32.43    | 1.06      |
 | Avg fwd passes            | 99.2   | 104.7    | 99.4      |
 | Constraint overhead (%)   | 11.95  | 24.25    | 12.67     |
 | Eff. constraint (%)       | —      | 20.43    | 1.22      |
@@ -25,15 +25,14 @@ Each row shows a validity pattern across methods (LAVE, Dgrammar, DPGrammar) and
 
 | Pattern (LAVE / Dgrammar / DPGrammar) | Count | %     | Example IDs             |
 | ------------------------------------- | ----- | ----- | ----------------------- |
-| ✓  ✓  ✓                               | 365   | 62.3% | o10217, o10518, o10617… |
-| ✗  —  —                               | 75    | 12.8% | o10566, o12175, o12178… |
-| ✗  ✓  ✓                               | 67    | 11.4% | o10297, o11795, o12286… |
-| ✓  ✗  ✓                               | 38    | 6.5%  | o1050, o12241, o13189…  |
-| ✗  ✗  ✓                               | 37    | 6.3%  | o10927, o11689, o11975… |
-| ✗  ✓  ✗                               | 2     | 0.3%  | o44462, o75601          |
-| ✗  ✗  ✗                               | 2     | 0.3%  | o5462, o83287           |
+| ✓  ✓  ✓                               | 365   | 71.4% | o10217, o10518, o10617… |
+| ✗  ✓  ✓                               | 67    | 13.1% | o10297, o11795, o12286… |
+| ✓  ✗  ✓                               | 38    | 7.4%  | o1050, o12241, o13189…  |
+| ✗  ✗  ✓                               | 37    | 7.2%  | o10927, o11689, o11975… |
+| ✗  ✓  ✗                               | 2     | 0.4%  | o44462, o75601          |
+| ✗  ✗  ✗                               | 2     | 0.4%  | o5462, o83287           |
 
-Total unique instances across all files: **586**
+Total unique instances across all files: **511**
 
 ## Disagreement Cases
 

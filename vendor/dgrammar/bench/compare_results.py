@@ -166,11 +166,24 @@ def main():
 
     sorted_bases = sorted(groups.keys(), key=sort_key)
 
+    # ── Matched-instance intersection ─────────────────────────────────────────
+    # Restrict all groups to the intersection of instance IDs across all methods.
+    # This ensures a fair apples-to-apples comparison: every method is evaluated
+    # on exactly the same set of instances.
+    # Note: LAVE has 75 extra instances that fail immediately with
+    # "Prompt does not conform to grammar" — schema-parse errors that
+    # Dgrammar/DPGrammar silently skip. Intersecting removes those.
+    all_id_sets = [set(groups[b].keys()) for b in sorted_bases]
+    matched_ids: set[str] = all_id_sets[0].copy()
+    for s in all_id_sets[1:]:
+        matched_ids &= s
+    print(f"Matched instance IDs across all methods: {len(matched_ids)}")
+
     # Compute stats per group.
     stats: dict[str, dict] = {}
     records_by_group: dict[str, list[dict]] = {}
     for base in sorted_bases:
-        recs = list(groups[base].values())
+        recs = [r for r in groups[base].values() if r["instance_id"] in matched_ids]
         records_by_group[base] = recs
         stats[base] = compute_stats(recs)
 

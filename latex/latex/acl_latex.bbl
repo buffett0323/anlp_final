@@ -1,4 +1,4 @@
-\begin{thebibliography}{15}
+\begin{thebibliography}{14}
 \providecommand{\natexlab}[1]{#1}
 
 \bibitem[{Agrawal et~al.(2026)Agrawal, Garrepalli, Goel, Lee, Lott, and Porikli}]{agrawal2026spiffymultiplyingdiffusionllm}
@@ -20,11 +20,6 @@ Yixin Dong, Charlie~F Ruan, Yaxing Cai, Ruihang Lai, Ziyi Xu, Yilong Zhao, and T
 Saibo Geng, Hudson Cooper, Michał Moskal, Samuel Jenkins, Julian Berman, Nathan Ranchin, Robert West, Eric Horvitz, and Harsha Nori. 2025.
 \newblock \href {https://arxiv.org/abs/2501.10868} {Jsonschemabench: A rigorous benchmark of structured outputs for language models}.
 \newblock \emph{Preprint}, arXiv:2501.10868.
-
-\bibitem[{Leviathan et~al.(2023)Leviathan, Kalman, and Matias}]{leviathan2023fastinferencetransformersspeculative}
-Yaniv Leviathan, Matan Kalman, and Yossi Matias. 2023.
-\newblock \href {https://arxiv.org/abs/2211.17192} {Fast inference from transformers via speculative decoding}.
-\newblock \emph{Preprint}, arXiv:2211.17192.
 
 \bibitem[{Li et~al.(2026)Li, Jiang, Cheng, Fu, Cai, Huang, Ye, Chen, and Hentenryck}]{li2026planverifyfillstructured}
 Miao Li, Hanyang Jiang, Sikai Cheng, Hengyu Fu, Yuhang Cai, Baihe Huang, Tinghan Ye, Xuanzhou Chen, and Pascal~Van Hentenryck. 2026.

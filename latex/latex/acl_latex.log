@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.17)  17 APR 2026 21:47
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.17)  19 APR 2026 00:49
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -874,165 +874,72 @@ Package microtype Info: Loading generic protrusion settings for font family
 (microtype)             For optimal results, create family-specific settings.
 (microtype)             See the microtype manual for details.
 
-(./final.tex [1{/usr/local/texlive/2026basic/texmf-var/fonts/map/pdftex/updmap/
-pdftex.map}{/usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/base/8r.enc
-}
+(./final.tex
+Underfull \hbox (badness 3838) in paragraph at lines 2--3
+\T1/ptm/m/n/10 (+20) stochas-tic lookahead-verify achieves only
+ []
+
+LaTeX Font Info:    Font shape `T1/cmtt/bx/n' in size <7> not available
+(Font)              Font shape `T1/cmtt/m/n' tried instead on input line 116.
+[1{/usr/local/texlive/2026basic/texmf-var/fonts/map/pdftex/updmap/pdftex.map}{/
+usr/local/texlive/2026basic/texmf-dist/fonts/enc/dvips/base/8r.enc}
 
 
 
 ]
-Underfull \hbox (badness 1132) in paragraph at lines 15--16
+Underfull \hbox (badness 1132) in paragraph at lines 163--164
 \T1/ptm/m/n/10.95 (+20) tic sam-pling un-der com-plex joint con-straints;
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 21--22
+Underfull \hbox (badness 10000) in paragraph at lines 169--170
  []\T1/ptm/b/n/10.95 (+20) Discrete dif-fu-sion and par-al-lel de-cod-ing.[]
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 21--22
-\T1/ptm/m/n/10.95 (+20) any-order text gen-er-a-tion through it-er-a-tive
- []
-
-
-Underfull \hbox (badness 1122) in paragraph at lines 21--22
+Underfull \hbox (badness 1122) in paragraph at lines 169--170
 \T1/ptm/m/n/10.95 (+20) DFlash ([][]Chen et al.[][], [][]2026[][]), Spiffy ([][
 ]Agrawal
  []
 
-
-Underfull \hbox (badness 3179) in paragraph at lines 30--31
+[2]
+Underfull \hbox (badness 3179) in paragraph at lines 178--179
  []\T1/ptm/b/n/10.95 (+20) Sparse tran-si-tion struc-tures and DP cost.[]
  []
 
-LaTeX Font Info:    Font shape `T1/cmtt/bx/n' in size <10.95> not available
-(Font)              Font shape `T1/cmtt/m/n' tried instead on input line 38.
-[2]
-Underfull \hbox (badness 10000) in paragraph at lines 44--45
+
+Underfull \hbox (badness 1946) in paragraph at lines 189--190
+\T1/ptm/m/n/10.95 (+20) nine Modal shards (seed $\OT1/cmr/m/n/10.95 0$\T1/ptm/m
+/n/10.95 (+20) , $\OML/cmm/m/it/10.95 T[]\OT1/cmr/m/n/10.95 128$\T1/ptm/m/n/10.
+95 (+20) , off-sets
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 193--194
  []\T1/ptm/b/n/10.95 (+20) Preprocessing.[] \T1/ptm/m/n/10.95 (+20) In-stances 
 with-out a us-able
  []
 
 
-Underfull \hbox (badness 1152) in paragraph at lines 44--45
+Underfull \hbox (badness 1152) in paragraph at lines 193--194
 \T1/ptm/m/n/10.95 (+20) is judged by the bench-mark's ex-trac-tion and
  []
 
-
-Underfull \hbox (badness 1533) in paragraph at lines 50--51
-\T1/ptm/m/n/10.95 (+20) loader un-der the same dif-fu-sion step bud-get
- []
-
-
-Underfull \hbox (badness 1270) in paragraph at lines 50--51
-\T1/ptm/m/n/10.95 (+20) (async greedy, \T1/cmtt/m/n/10.95 v2_async_ac4_timed\T1
-/ptm/m/n/10.95 (+20) ) against
- []
-
-
-Underfull \hbox (badness 1178) in paragraph at lines 50--51
-\T1/ptm/b/n/10.95 (+20) DP-Gram-mar \T1/ptm/m/n/10.95 (+20) (\T1/cmtt/m/n/10.95
- generate_dp\T1/ptm/m/n/10.95 (+20) ) on iden-ti-cal in-
- []
-
-
-Underfull \hbox (badness 10000) in paragraph at lines 57--58
- []\T1/ptm/b/n/10.95 (+20) Constraint at the fron-tier only.[]
- []
-
-
-Underfull \hbox (badness 10000) in paragraph at lines 57--58
-\T1/cmtt/m/n/10.95 compute_mask(vocab_size) \T1/ptm/m/n/10.95 (+20) is ap-plied
- at
- []
-
-
-Underfull \hbox (badness 2213) in paragraph at lines 73--74
-\T1/ptm/m/n/10.95 (+20) DPGrammar uses the \T1/ptm/m/it/10.95 (+20) same \T1/pt
-m/m/n/10.95 (+20) loop as Dgram-
- []
-
-
-Underfull \hbox (badness 1147) in paragraph at lines 73--74
-\T1/ptm/m/n/10.95 (+20) mar; the only change is re-pair at vi-o-la-tions.
- []
-
-
-Underfull \hbox (badness 3009) in paragraph at lines 73--74
-\T1/ptm/m/n/10.95 (+20) When con-sump-tion fails at $\OML/cmm/m/it/10.95 c$\T1/
-ptm/m/n/10.95 (+20) , we op-ti-mize
- []
-
-
-Underfull \hbox (badness 4013) in paragraph at lines 73--74
-\T1/ptm/m/n/10.95 (+20) the span $\OT1/cmr/m/n/10.95 [\OML/cmm/m/it/10.95 c; s\
-OT1/cmr/m/n/10.95 )$ \T1/ptm/m/n/10.95 (+20) up to the next mask with
- []
-
-
-Underfull \hbox (badness 4673) in paragraph at lines 73--74
-\T1/ptm/m/n/10.95 (+20) keys from \T1/cmtt/m/n/10.95 matcher.compute_logit_bias
-()\T1/ptm/m/n/10.95 (+20) ,
- []
-
-[3]
-Underfull \hbox (badness 10000) in paragraph at lines 297--298
- []\T1/ptm/b/n/10.95 (+20) LAVE vs. Dgram-mar (en-gi-neer-ing step).[]
- []
-
-
-Underfull \hbox (badness 1946) in paragraph at lines 297--298
-\T1/ptm/m/n/10.95 (+20) LAVE reaches 68.8% va-lid-ity ($\OML/cmm/m/it/10.95 n[]
-\OT1/cmr/m/n/10.95 586$\T1/ptm/m/n/10.95 (+20) ) with
- []
-
-
-Underfull \hbox (badness 1460) in paragraph at lines 297--298
-\T1/ptm/m/n/10.95 (+20) sam-pling with de-ter-min-is-tic fron-tier mask-ing:
- []
-
-
-Underfull \hbox (badness 1546) in paragraph at lines 297--298
-\T1/ptm/m/n/10.95 (+20) The en-gi-neer-ing re-design^^Vincremental parser
- []
-
-LaTeX Info: Symbol \textrightarrow not provided by
-            font family ptm in TS1 encoding.
-            Default family used instead on input line 300.
-
-Underfull \hbox (badness 1509) in paragraph at lines 303--304
+[3] [4]
+Underfull \hbox (badness 1509) in paragraph at lines 504--505
 \T1/ptm/m/n/10.95 (+20) re-main-ing 0.8% DP-Gram-mar fail-ures in-clude
  []
 
 
-Underfull \hbox (badness 3758) in paragraph at lines 303--304
+Underfull \hbox (badness 3758) in paragraph at lines 504--505
 \T1/ptm/m/n/10.95 (+20) completion-phase lim-its and schemas where
  []
 
 
-Overfull \hbox (28.93687pt too wide) in paragraph at lines 308--331
- [][] 
- []
+Underfull \vbox (badness 5288) has occurred while \output is active []
 
-LaTeX Font Info:    Font shape `T1/cmtt/bx/n' in size <7> not available
-(Font)              Font shape `T1/cmtt/m/n' tried instead on input line 433.
-
-Underfull \hbox (badness 10000) in paragraph at lines 477--478
- []\T1/ptm/b/n/10.95 (+20) Interpretation.[] \T1/ptm/m/n/10.95 (+20) The LAVE^^
-UDgrammar gap
- []
-
-
-Underfull \hbox (badness 4792) in paragraph at lines 477--478
-\T1/ptm/m/n/10.95 (+20) po-si-tions re-quire a prin-ci-pled com-bi-na-to-rial
- []
-
-[4]
-Underfull \vbox (badness 6725) has occurred while \output is active []
-
- [5])
-(./acl_latex.bbl
+ [5]
+[6]) (./acl_latex.bbl
 Underfull \hbox (badness 1184) in paragraph at lines 20--23
 \T1/ptm/m/n/10 (+20) schemabench: A rig-or-ous bench-mark of struc-
  []
@@ -1043,62 +950,98 @@ Underfull \hbox (badness 1609) in paragraph at lines 20--23
  (+20) Preprint\T1/ptm/m/n/10 (+20) ,
  []
 
-[6]) [7
+) (./appendix.tex
+LaTeX Font Info:    Font shape `T1/cmtt/bx/n' in size <12> not available
+(Font)              Font shape `T1/cmtt/m/n' tried instead on input line 3.
 
-] (./acl_latex.aux)
+
+LaTeX Warning: Reference `alg:dpgrammar' on page 7 undefined on input line 6.
+
+[7]
+Overfull \hbox (56.39453pt too wide) in paragraph at lines 65--79
+ [][] 
+ []
+
+
+Underfull \hbox (badness 1622) in paragraph at lines 86--92
+\T1/ptm/m/n/10.95 (+20) We eval-u-ate on the \T1/cmtt/m/n/10.95 Github_medium \
+T1/ptm/m/n/10.95 (+20) split of
+ []
+
+
+Underfull \hbox (badness 1496) in paragraph at lines 86--92
+\T1/ptm/m/n/10.95 (+20) Of these, 75 are ex-cluded from all com-par-
+ []
+
+
+Underfull \hbox (badness 1199) in paragraph at lines 86--92
+\T1/ptm/m/n/10.95 (+20) at com-pile time: LAVE im-me-di-ately re-turns
+ []
+
+
+Overfull \hbox (37.7931pt too wide) in paragraph at lines 104--118
+ [][] 
+ []
+
+
+LaTeX Warning: `h' float specifier changed to `ht'.
+
+) [8] (./acl_latex.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
  ***********
+
+
+LaTeX Warning: There were undefined references.
+
 Package rerunfilecheck Info: File `acl_latex.out' has not changed.
-(rerunfilecheck)             Checksum: 7FAF199BCEB8180A6AD98EA4E56F9B16;2309.
+(rerunfilecheck)             Checksum: AA66900269842A7FDBDC9F5B0DD0729B;2999.
  ) 
 Here is how much of TeX's memory you used:
- 26998 strings out of 469006
- 502002 string characters out of 5454813
- 989015 words of memory out of 5000000
- 54766 multiletter control sequences out of 15000+600000
- 727721 words of font info for 394 fonts, out of 8000000 for 9000
+ 27131 strings out of 469006
+ 503542 string characters out of 5454813
+ 974622 words of memory out of 5000000
+ 54862 multiletter control sequences out of 15000+600000
+ 731274 words of font info for 418 fonts, out of 8000000 for 9000
  319 hyphenation exceptions out of 8191
- 90i,15n,94p,1675b,949s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 90i,15n,94p,1605b,949s stack positions out of 10000i,1000n,20000p,200000b,200000s
  </Users/buffettliu/Library/texlive/2026basic/texmf-var/fonts/pk/ljfour/jknap
-pen/ec/ecit0800.525pk> </Users/buffettliu/Library/texlive/2026basic/texmf-var/f
-onts/pk/ljfour/jknappen/ec/ectt0800.450pk> </Users/buffettliu/Library/texlive/2
-026basic/texmf-var/fonts/pk/ljfour/jknappen/ec/ecit0800.450pk> </Users/buffettl
+pen/ec/ectt0800.450pk> </Users/buffettliu/Library/texlive/2026basic/texmf-var/f
+onts/pk/ljfour/jknappen/ec/ecit0800.450pk> </Users/buffettliu/Library/texlive/2
+026basic/texmf-var/fonts/pk/ljfour/jknappen/ec/ectt0900.600pk> </Users/buffettl
 iu/Library/texlive/2026basic/texmf-var/fonts/pk/ljfour/jknappen/ec/ectt0800.525
 pk> </Users/buffettliu/Library/texlive/2026basic/texmf-var/fonts/pk/ljfour/jkna
-ppen/ec/tcrm1095.600pk> </Users/buffettliu/Library/texlive/2026basic/texmf-var/
-fonts/pk/ljfour/jknappen/ec/ectt0900.600pk> </Users/buffettliu/Library/texlive/
-2026basic/texmf-var/fonts/pk/ljfour/jknappen/ec/ectt1095.600pk> </Users/buffett
-liu/Library/texlive/2026basic/texmf-var/fonts/pk/ljfour/jknappen/ec/ectt1000.60
-0pk> </Users/buffettliu/Library/texlive/2026basic/texmf-var/fonts/pk/ljfour/jkn
-appen/ec/ectt1200.600pk></usr/local/texlive/2026basic/texmf-dist/fonts/type1/pu
-blic/amsfonts/cm/cmmi10.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type
-1/public/amsfonts/cm/cmmi5.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/t
-ype1/public/amsfonts/cm/cmmi6.pfb></usr/local/texlive/2026basic/texmf-dist/font
-s/type1/public/amsfonts/cm/cmmi7.pfb></usr/local/texlive/2026basic/texmf-dist/f
-onts/type1/public/amsfonts/cm/cmmi9.pfb></usr/local/texlive/2026basic/texmf-dis
-t/fonts/type1/public/amsfonts/cm/cmr10.pfb></usr/local/texlive/2026basic/texmf-
-dist/fonts/type1/public/amsfonts/cm/cmr5.pfb></usr/local/texlive/2026basic/texm
-f-dist/fonts/type1/public/amsfonts/cm/cmr6.pfb></usr/local/texlive/2026basic/te
-xmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb></usr/local/texlive/2026basic/
-texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></usr/local/texlive/2026basi
-c/texmf-dist/fonts/type1/public/amsfonts/cm/cmr9.pfb></usr/local/texlive/2026ba
-sic/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/local/texlive/20
-26basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy5.pfb></usr/local/texlive
-/2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy6.pfb></usr/local/texl
-ive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></usr/local/t
-exlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy8.pfb></usr/loca
-l/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/symbols/msam7.pfb></
-usr/local/texlive/2026basic/texmf-dist/fonts/type1/urw/times/utmb8a.pfb></usr/l
-ocal/texlive/2026basic/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></usr/local/
-texlive/2026basic/texmf-dist/fonts/type1/urw/times/utmri8a.pfb>
-Output written on acl_latex.pdf (7 pages, 300423 bytes).
+ppen/ec/ecit0800.525pk> </Users/buffettliu/Library/texlive/2026basic/texmf-var/
+fonts/pk/ljfour/jknappen/ec/ectt1095.600pk> </Users/buffettliu/Library/texlive/
+2026basic/texmf-var/fonts/pk/ljfour/jknappen/ec/ectt1000.600pk> </Users/buffett
+liu/Library/texlive/2026basic/texmf-var/fonts/pk/ljfour/jknappen/ec/ectt1200.60
+0pk></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cmextr
+a/cmex7.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfont
+s/cm/cmmi10.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/ams
+fonts/cm/cmmi5.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/
+amsfonts/cm/cmmi6.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/publ
+ic/amsfonts/cm/cmmi7.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/p
+ublic/amsfonts/cm/cmmi9.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type
+1/public/amsfonts/cm/cmr10.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/t
+ype1/public/amsfonts/cm/cmr5.pfb></usr/local/texlive/2026basic/texmf-dist/fonts
+/type1/public/amsfonts/cm/cmr6.pfb></usr/local/texlive/2026basic/texmf-dist/fon
+ts/type1/public/amsfonts/cm/cmr7.pfb></usr/local/texlive/2026basic/texmf-dist/f
+onts/type1/public/amsfonts/cm/cmr8.pfb></usr/local/texlive/2026basic/texmf-dist
+/fonts/type1/public/amsfonts/cm/cmr9.pfb></usr/local/texlive/2026basic/texmf-di
+st/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/local/texlive/2026basic/texm
+f-dist/fonts/type1/public/amsfonts/cm/cmsy5.pfb></usr/local/texlive/2026basic/t
+exmf-dist/fonts/type1/public/amsfonts/cm/cmsy6.pfb></usr/local/texlive/2026basi
+c/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></usr/local/texlive/2026b
+asic/texmf-dist/fonts/type1/public/amsfonts/symbols/msam5.pfb></usr/local/texli
+ve/2026basic/texmf-dist/fonts/type1/public/amsfonts/symbols/msam7.pfb></usr/loc
+al/texlive/2026basic/texmf-dist/fonts/type1/urw/times/utmb8a.pfb></usr/local/te
+xlive/2026basic/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></usr/local/texlive
+/2026basic/texmf-dist/fonts/type1/urw/times/utmri8a.pfb>
+Output written on acl_latex.pdf (8 pages, 330155 bytes).
 PDF statistics:
- 566 PDF objects out of 1000 (max. 8388607)
- 337 compressed objects within 4 object streams
- 64 named destinations out of 1000 (max. 500000)
- 97925 words of extra memory for PDF output out of 106986 (max. 10000000)
-
-6 (max. 10000000)
+ 615 PDF objects out of 1000 (max. 8388607)
+ 366 compressed objects within 4 object streams
+ 67 named destinations out of 1000 (max. 500000)
+ 101029 words of extra memory for PDF output out of 106986 (max. 10000000)
 
