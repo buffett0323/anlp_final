@@ -40,7 +40,7 @@
 \usepackage{graphicx}
 
 % algorithms/tikz are not in TeX Live Basic; omit if missing (fine for text-only papers).
-\IfFileExists{algorithm.sty}{%
+\IfFileExists{algpseudocode.sty}{%
   \usepackage{algorithm}%
   \usepackage{algpseudocode}%
 }{}
@@ -52,6 +52,23 @@
 \usepackage{tikz}
 \usetikzlibrary{positioning,arrows.meta,calc,fit,backgrounds,decorations.pathreplacing}
 \usepackage{xcolor}
+\usepackage{listings}
+% Breakable code blocks for two-column appendix (JSON / regex).
+\lstdefinestyle{appendixcode}{%
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  breakatwhitespace=false,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  frame=leftline,
+  framerule=0.4pt,
+  rulecolor=\color{black!55},
+  xleftmargin=0.6em,
+  framexleftmargin=0.6em,
+  aboveskip=0.35\baselineskip,
+  belowskip=0.35\baselineskip,
+}
 % If the title and author information does not fit in the area allocated, uncomment the following
 %
 %\setlength\titlebox{<dim>}
@@ -82,6 +99,6 @@
 
 
 % --- APPENDIX ---
-\input{latex/appendix}
+\input{appendix}
 
 \end{document}
