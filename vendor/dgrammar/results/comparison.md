@@ -36,10 +36,10 @@ Each row shows a validity pattern across methods (LAVE).
 | Validity (%)              | 77.7%  | 84.9%    | 95.3%     |
 | Timeouts (>120s)          | 68     | 0        | 0         |
 | Mean resamples            | 233.87 | 32.43    | 2.11      |
-| Mean time (s)             | 41.12  | 13.38    | 15.76     |
-| Median time (s)           | 27.34  | 13.65    | 15.42     |
-| P95 time (s)              | 120.00 | 20.93    | 28.65     |
-| Max time (s)              | 120.05 | 33.45    | 46.46     |
+| Mean time (s)             | 41.12  | 13.38    | 16.14     |
+| Median time (s)           | 27.34  | 13.65    | 15.61     |
+| P95 time (s)              | 120.00 | 20.93    | 29.36     |
+| Max time (s)              | 120.05 | 33.45    | 88.17     |
 
 ### Per-instance Validity Agreement
 
