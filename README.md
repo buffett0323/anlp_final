@@ -1,12 +1,12 @@
 # Dgrammar & DPGrammar: Constrained Decoding for Diffusion LLMs
 
 
+<div align="center">
 
-**Jeng-Yue Liu**1, **Wilson Zheng**1, **Haoling Pu**1
+<p>Jeng-Yue Liu, Wilson Zheng, Haoling Pu</p>
+<p>Language Technologies Institute, Carnegie Mellon University</p>
 
-1 Language Technologies Institute, Carnegie Mellon University
-
-`{buffettl,wilsonz,haolingp}@andrew.cmu.edu`
+</div>
 
 Constrained decoding for **discrete diffusion language models** (dLLMs), using **incremental JSON Schema** checking ([llguidance](https://github.com/microsoft/llguidance)), **deterministic frontier masking** (**Dgrammar**), and **Viterbi joint repair** over violated spans (**DPGrammar**, `dp_fix_prefix`). This repo accompanies the write-up in `[latex/latex/final.tex](latex/latex/final.tex)` (build with `pdflatex` in `latex/latex/`).
 
