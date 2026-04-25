@@ -1,14 +1,12 @@
 # Dgrammar & DPGrammar: Constrained Decoding for Diffusion LLMs
 
-<div align="center">
 
-<p><strong>Jeng-Yue Liu</strong><sup>1</sup>,
-<strong>Wilson Zheng</strong><sup>1</sup>,
-<strong>Haoling Pu</strong><sup>1</sup></p>
-<p><sup>1</sup> Language Technologies Institute, Carnegie Mellon University</p>
-<p><code>{buffettl,wilsonz,haolingp}@andrew.cmu.edu</code></p>
-</div>
 
+**Jeng-Yue Liu**1, **Wilson Zheng**1, **Haoling Pu**1
+
+1 Language Technologies Institute, Carnegie Mellon University
+
+`{buffettl,wilsonz,haolingp}@andrew.cmu.edu`
 
 Constrained decoding for **discrete diffusion language models** (dLLMs), using **incremental JSON Schema** checking ([llguidance](https://github.com/microsoft/llguidance)), **deterministic frontier masking** (**Dgrammar**), and **Viterbi joint repair** over violated spans (**DPGrammar**, `dp_fix_prefix`). This repo accompanies the write-up in `[latex/latex/final.tex](latex/latex/final.tex)` (build with `pdflatex` in `latex/latex/`).
 
@@ -78,6 +76,8 @@ uv pip install -e .
 uv pip install llguidance>=1.6
 # For v1 (rustformlang backend)
 cd vendor/constrained-diffusion/rustformlang_bindings && maturin develop --release
+
+export HF_TOKEN= #your hugging face token
 ```
 
 For LLaDA: `uv pip install -r requirements-llada.txt`.
@@ -88,14 +88,13 @@ For LLaDA: `uv pip install -r requirements-llada.txt`.
 
 ## Running benchmarks (Modal)
 
-From **`vendor/dgrammar`** with the [Modal](https://modal.com) CLI installed and authenticated. GPU jobs use the image defined in each script (A100); results go to the **`dgrammar-results`** volume unless you change the script. Merge JSONL shards on **`instance_id`** as in **§Data** of `latex/latex/final.tex`.
+From `**vendor/dgrammar`** with the [Modal](https://modal.com) CLI installed and authenticated. GPU jobs use the image defined in each script (A100); results go to the `**dgrammar-results**` volume unless you change the script. Merge JSONL shards on `**instance_id**` as in **§Data** of `latex/latex/final.tex`.
 
-Paper-style sharding uses **`--total 586`** and **`--chunks 9`** (66 instances per chunk, offsets 0, 66, …, 528)—same idea as `vendor/dgrammar/run_all_benchmarks.sh`. For a smoke test, use e.g. `--total 66 --chunks 1`.
+Paper-style sharding uses `**--total 586`** and `**--chunks 9**` (66 instances per chunk, offsets 0, 66, …, 528)—same idea as `vendor/dgrammar/run_all_benchmarks.sh`. For a smoke test, use e.g. `--total 66 --chunks 1`.
 
 ### LAVE (`bench/modal_lave_bench.py`)
 
 ```bash
-cd vendor/dgrammar
 modal run bench/modal_lave_bench.py \
   --seed 0 --total 586 --steps 128 --chunks 9 \
   --dataset jsb_medium --instance-timeout 120
@@ -104,7 +103,6 @@ modal run bench/modal_lave_bench.py \
 ### Dgrammar (`bench/modal_dgrammar_bench.py`, `--method dgrammar`)
 
 ```bash
-cd vendor/dgrammar
 modal run bench/modal_dgrammar_bench.py \
   --seed 0 --total 586 --steps 128 --chunks 9 \
   --block-ar 1 --dataset jsb_medium --method dgrammar
@@ -113,7 +111,6 @@ modal run bench/modal_dgrammar_bench.py \
 ### DPGrammar (same Modal app, `--method dp`)
 
 ```bash
-cd vendor/dgrammar
 modal run bench/modal_dgrammar_bench.py \
   --seed 0 --total 586 --steps 128 --chunks 9 \
   --block-ar 1 --dataset jsb_medium --method dp
@@ -126,12 +123,12 @@ modal run bench/modal_dgrammar_bench.py \
 ## Layout
 
 
-| Path | Role |
-|------|------|
-| [`latex/latex/final.tex`](latex/latex/final.tex) | Paper: motivation, method, Table 1, limitations |
-| [`vendor/dgrammar/`](vendor/dgrammar/) | Implementation + benches + Modal |
-| [`bench/`](bench/) | Mirror / helpers for bench scripts |
-| [`docs/`](docs/) | Extra notes |
+| Path                                             | Role                                            |
+| ------------------------------------------------ | ----------------------------------------------- |
+| `[latex/latex/final.tex](latex/latex/final.tex)` | Paper: motivation, method, Table 1, limitations |
+| `[vendor/dgrammar/](vendor/dgrammar/)`           | Implementation + benches + Modal                |
+| `[bench/](bench/)`                               | Mirror / helpers for bench scripts              |
+| `[docs/](docs/)`                                 | Extra notes                                     |
 
 
 ---
