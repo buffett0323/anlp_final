@@ -1,8 +1,16 @@
 # Dgrammar & DPGrammar: Constrained Decoding for Diffusion LLMs
 
-Constrained decoding for **discrete diffusion language models** (dLLMs), using **incremental JSON Schema** checking ([llguidance](https://github.com/microsoft/llguidance)), **deterministic frontier masking** (**Dgrammar**), and **Viterbi joint repair** over violated spans (**DPGrammar**, `dp_fix_prefix`). This repo accompanies the write-up in `[latex/latex/final.tex](latex/latex/final.tex)` (build with `pdflatex` in `latex/latex/`).
+<div align="center">
 
-**Code:** [https://github.com/buffett0323/anlp_final](https://github.com/buffett0323/anlp_final)
+<p><strong>Jeng-Yue Liu</strong><sup>1</sup>,
+<strong>Wilson Zheng</strong><sup>1</sup>,
+<strong>Haoling Pu</strong><sup>1</sup></p>
+<p><sup>1</sup> Language Technologies Institute, Carnegie Mellon University</p>
+<p><code>{buffettl,wilsonz,haolingp}@andrew.cmu.edu</code></p>
+</div>
+
+
+Constrained decoding for **discrete diffusion language models** (dLLMs), using **incremental JSON Schema** checking ([llguidance](https://github.com/microsoft/llguidance)), **deterministic frontier masking** (**Dgrammar**), and **Viterbi joint repair** over violated spans (**DPGrammar**, `dp_fix_prefix`). This repo accompanies the write-up in `[latex/latex/final.tex](latex/latex/final.tex)` (build with `pdflatex` in `latex/latex/`).
 
 ---
 
@@ -11,7 +19,6 @@ Constrained decoding for **discrete diffusion language models** (dLLMs), using *
 You can view the final project poster here:
 
 [📄 Final Poster (PDF)](docs/Final_Poster.pdf)
-
 
 ---
 
@@ -65,7 +72,12 @@ All methods on the **same** **511** instances after **75** schemas are dropped (
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 uv python install 3.11
-uv pip install -r requirements.txt
+
+uv pip install -e .
+# llguidance for token-level grammar checking
+uv pip install llguidance>=1.6
+# For v1 (rustformlang backend)
+cd vendor/constrained-diffusion/rustformlang_bindings && maturin develop --release
 ```
 
 For LLaDA: `uv pip install -r requirements-llada.txt`.
@@ -74,32 +86,52 @@ For LLaDA: `uv pip install -r requirements-llada.txt`.
 
 ---
 
-## Running benchmarks
+## Running benchmarks (Modal)
 
-Scripts under `**vendor/dgrammar/bench/`** (and `**bench/**` at repo root) typically take:
+From **`vendor/dgrammar`** with the [Modal](https://modal.com) CLI installed and authenticated. GPU jobs use the image defined in each script (A100); results go to the **`dgrammar-results`** volume unless you change the script. Merge JSONL shards on **`instance_id`** as in **§Data** of `latex/latex/final.tex`.
 
-`seed  limit  dataset_name  diffusion_steps  offset  [instance_timeout_s]`
+Paper-style sharding uses **`--total 586`** and **`--chunks 9`** (66 instances per chunk, offsets 0, 66, …, 528)—same idea as `vendor/dgrammar/run_all_benchmarks.sh`. For a smoke test, use e.g. `--total 66 --chunks 1`.
 
-Example (**LAVE**, `**jsb_medium`**, T{=}128, seed **0**):
+### LAVE (`bench/modal_lave_bench.py`)
 
 ```bash
 cd vendor/dgrammar
-python bench/run_lave_timed.py 0 511 jsb_medium 128 0 120
+modal run bench/modal_lave_bench.py \
+  --seed 0 --total 586 --steps 128 --chunks 9 \
+  --dataset jsb_medium --instance-timeout 120
 ```
 
-**Dgrammar** / **DPGrammar:** use `run_dgrammar_timed.py`, `run_lave_improved_timed.py`, or Modal entrypoints under `bench/modal_*.py`. Merge shard JSONLs on `instance_id` as in **§Data**, `final.tex`.
+### Dgrammar (`bench/modal_dgrammar_bench.py`, `--method dgrammar`)
+
+```bash
+cd vendor/dgrammar
+modal run bench/modal_dgrammar_bench.py \
+  --seed 0 --total 586 --steps 128 --chunks 9 \
+  --block-ar 1 --dataset jsb_medium --method dgrammar
+```
+
+### DPGrammar (same Modal app, `--method dp`)
+
+```bash
+cd vendor/dgrammar
+modal run bench/modal_dgrammar_bench.py \
+  --seed 0 --total 586 --steps 128 --chunks 9 \
+  --block-ar 1 --dataset jsb_medium --method dp
+```
+
+`modal_lave_improved_bench.py` is for ablation directions, not the main Table 1 **DPGrammar** line. For non-Modal runs, call `bench/run_lave_timed.py` / `bench/run_dgrammar_timed.py` with the same argv layout as `run_all_benchmarks.sh`.
 
 ---
 
 ## Layout
 
 
-| Path                                             | Role                                            |
-| ------------------------------------------------ | ----------------------------------------------- |
-| `[latex/latex/final.tex](latex/latex/final.tex)` | Paper: motivation, method, Table 1, limitations |
-| `[vendor/dgrammar/](vendor/dgrammar/)`           | Implementation + benches + Modal                |
-| `[bench/](bench/)`                               | Mirror / helpers for bench scripts              |
-| `[docs/](docs/)`                                 | Extra notes                                     |
+| Path | Role |
+|------|------|
+| [`latex/latex/final.tex`](latex/latex/final.tex) | Paper: motivation, method, Table 1, limitations |
+| [`vendor/dgrammar/`](vendor/dgrammar/) | Implementation + benches + Modal |
+| [`bench/`](bench/) | Mirror / helpers for bench scripts |
+| [`docs/`](docs/) | Extra notes |
 
 
 ---
@@ -112,4 +144,4 @@ LAVE (Zhang et al., ACM 2026); DINGO (Suresh et al., NeurIPS 2025); constrained 
 
 ## Limitations
 
-See **§Limitations** in `final.tex`: single split and backbone; validity ≠ semantic quality; DPGrammar **top-*K*** and `**find_constraint_end`** heuristic; fixed T, temperature, and timeout not fully tuned.
+See **§Limitations** in `final.tex`: single split and backbone; validity ≠ semantic quality; DPGrammar **top-*K*** and `find_constraint_end` heuristic; fixed T, temperature, and timeout not fully tuned.
