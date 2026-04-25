@@ -1,24 +1,14 @@
 # Dgrammar & DPGrammar: Constrained Decoding for Diffusion LLMs
 
 
-<div align="center">
 
-<p>Jeng-Yue Liu, Wilson Zheng, Haoling Pu</p>
-<p>Language Technologies Institute, Carnegie Mellon University</p>
+Jeng-Yue Liu, Wilson Zheng, Haoling Pu
 
-</div>
+Language Technologies Institute, Carnegie Mellon University
 
-Constrained decoding for **discrete diffusion language models** (dLLMs), using **incremental JSON Schema** checking ([llguidance](https://github.com/microsoft/llguidance)), **deterministic frontier masking** (**Dgrammar**), and **Viterbi joint repair** over violated spans (**DPGrammar**, `dp_fix_prefix`). This repo accompanies the write-up in `[latex/latex/final.tex](latex/latex/final.tex)` (build with `pdflatex` in `latex/latex/`).
 
----
 
-## Poster
 
-You can view the final project poster here:
-
-[📄 Final Poster (PDF)](docs/Final_Poster.pdf)
-
----
 
 ## Abstract
 
@@ -26,7 +16,7 @@ LAVE-style **stochastic lookahead–verify** reports 99% validity on easy JSON b
 
 ---
 
-## Problem (one paragraph)
+## Problem
 
 **LAVE** accepts a frontier token only if ≥1 of *K* **random** full completions is grammar-valid. Under **joint** constraints (e.g. enum casing **and** a fixed-length hex pattern), valid random suffixes are astronomically rare → false rejections, many forwards per token, and **120 s** timeouts.
 
@@ -36,7 +26,7 @@ LAVE-style **stochastic lookahead–verify** reports 99% validity on easy JSON b
 
 ---
 
-## Main results — Table 1 (`jsb_medium`, matched n)
+## Main results
 
 All methods on the **same** **511** instances after **75** schemas are dropped (**llguidance** compile failures). **LLaDA-8B-Instruct**, **T=128** diffusion steps, block **32**, temperature **0.2** (details in the paper Appendix).
 
@@ -88,9 +78,9 @@ For LLaDA: `uv pip install -r requirements-llada.txt`.
 
 ## Running benchmarks (Modal)
 
-From `**vendor/dgrammar`** with the [Modal](https://modal.com) CLI installed and authenticated. GPU jobs use the image defined in each script (A100); results go to the `**dgrammar-results**` volume unless you change the script. Merge JSONL shards on `**instance_id**` as in **§Data** of `latex/latex/final.tex`.
+From `**vendor/dgrammar`** with the [Modal](https://modal.com) CLI installed and authenticated. GPU jobs use the image defined in each script (A100); results go to the `**dgrammar-results`** volume unless you change the script. Merge JSONL shards on `**instance_id**` as in **§Data** of `latex/latex/final.tex`.
 
-Paper-style sharding uses `**--total 586`** and `**--chunks 9**` (66 instances per chunk, offsets 0, 66, …, 528)—same idea as `vendor/dgrammar/run_all_benchmarks.sh`. For a smoke test, use e.g. `--total 66 --chunks 1`.
+Paper-style sharding uses `**--total 586`** and `**--chunks 9`** (66 instances per chunk, offsets 0, 66, …, 528)—same idea as `vendor/dgrammar/run_all_benchmarks.sh`. For a smoke test, use e.g. `--total 66 --chunks 1`.
 
 ### LAVE (`bench/modal_lave_bench.py`)
 
@@ -120,20 +110,15 @@ modal run bench/modal_dgrammar_bench.py \
 
 ---
 
-## Layout
+## Poster
 
+You can view the final project poster here:
 
-| Path                                             | Role                                            |
-| ------------------------------------------------ | ----------------------------------------------- |
-| `[latex/latex/final.tex](latex/latex/final.tex)` | Paper: motivation, method, Table 1, limitations |
-| `[vendor/dgrammar/](vendor/dgrammar/)`           | Implementation + benches + Modal                |
-| `[bench/](bench/)`                               | Mirror / helpers for bench scripts              |
-| `[docs/](docs/)`                                 | Extra notes                                     |
-
+[📄 Final Poster (PDF)](docs/Final_Poster.pdf)
 
 ---
 
-## References (paper)
+## References
 
 LAVE (Zhang et al., ACM 2026); DINGO (Suresh et al., NeurIPS 2025); constrained diffusion / CD4dLLM; **llguidance** (Microsoft, 2025); STATIC (Su et al., 2026); **JSONSchemaBench** (Geng et al., 2025).
 
