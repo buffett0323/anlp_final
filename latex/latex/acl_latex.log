@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.17)  25 APR 2026 13:52
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (preloaded format=pdflatex 2026.4.17)  27 APR 2026 14:43
 entering extended mode
  restricted \write18 enabled.
  file:line:error style messages enabled.
@@ -833,24 +833,71 @@ Underfull \hbox (badness 10000) in paragraph at lines 16--18
  []
 
 [8]
-Underfull \hbox (badness 1622) in paragraph at lines 146--150
+Underfull \hbox (badness 10000) in paragraph at lines 119--122
+\T1/ptm/m/n/10.95 (+20) A re-cur-ring qual-i-ta-tive dif-fer-ence be-tween
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 119--122
+\T1/cmtt/m/n/10.95 "format": "uuid"\T1/ptm/m/n/10.95 (+20) , \T1/cmtt/m/n/10.95 "format": "uri"\T1/ptm/m/n/10.95 (+20) ).
+ []
+
+
+Overfull \hbox (332.83336pt too wide) in paragraph at lines 146--164
+ [][] 
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 169--172
+ []\T1/ptm/b/n/10.95 (+20) Dgrammar.[] \T1/ptm/m/n/10.95 (+20) Fron-tier mask-ing re-stricts
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 169--172
+\T1/ptm/m/n/10.95 (+20) each to-ken to the au-toma-ton's valid
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 169--172
+\T1/ptm/m/n/10.95 (+20) set, but when the model gen-er-ates a
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 169--172
+\T1/ptm/m/n/10.95 (+20) high-confidence non-UUID string (e.g.
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 169--172
+\T1/cmtt/m/n/10.95 "12000e1TestCaseCanceledEvent"\T1/ptm/m/n/10.95 (+20) ), each
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 174--178
+\T1/cmtt/m/n/10.95 "123e4567-90ab-12cd-abef-123456789000"
+ []
+
+[9]
+Underfull \hbox (badness 1622) in paragraph at lines 220--224
 \T1/ptm/m/n/10.95 (+20) We eval-u-ate on the \T1/cmtt/m/n/10.95 Github_medium \T1/ptm/m/n/10.95 (+20) split of
  []
 
 
-Underfull \hbox (badness 1496) in paragraph at lines 146--150
+Underfull \hbox (badness 1496) in paragraph at lines 220--224
 \T1/ptm/m/n/10.95 (+20) Of these, 75 are ex-cluded from all com-par-
  []
 
 
-Underfull \hbox (badness 1199) in paragraph at lines 146--150
+Underfull \hbox (badness 1199) in paragraph at lines 220--224
 \T1/ptm/m/n/10.95 (+20) at com-pile time: LAVE im-me-di-ately re-turns
  []
 
 
 LaTeX Warning: `h' float specifier changed to `ht'.
 
-) [9] [10] (./acl_latex.aux)
+) [10
+
+] [11] (./acl_latex.aux)
  ***********
 LaTeX2e <2025-11-01>
 L3 programming layer <2026-01-19>
@@ -860,21 +907,21 @@ L3 programming layer <2026-01-19>
 LaTeX Warning: There were undefined references.
 
 Package rerunfilecheck Info: File `acl_latex.out' has not changed.
-(rerunfilecheck)             Checksum: 0672E5227A324CE7A90D0BD75B0CDA73;3188.
+(rerunfilecheck)             Checksum: 3D21B4F311DFE227867A01C263C410E9;3562.
  ) 
 Here is how much of TeX's memory you used:
- 28771 strings out of 469006
- 525693 string characters out of 5454813
- 1070728 words of memory out of 5000000
- 56457 multiletter control sequences out of 15000+600000
- 731724 words of font info for 421 fonts, out of 8000000 for 9000
+ 28807 strings out of 469006
+ 526101 string characters out of 5454813
+ 1070945 words of memory out of 5000000
+ 56460 multiletter control sequences out of 15000+600000
+ 732632 words of font info for 430 fonts, out of 8000000 for 9000
  319 hyphenation exceptions out of 8191
  90i,15n,94p,1658b,1129s stack positions out of 10000i,1000n,20000p,200000b,200000s
  </Users/buffettliu/Library/texlive/2026basic/texmf-var/fonts/pk/ljfour/jknappen/ec/ectt0800.450pk> </Users/buffettliu/Library/texlive/2026basic/texmf-var/fonts/pk/ljfour/jknappen/ec/ecit0800.450pk> </Users/buffettliu/Library/texlive/2026basic/texmf-var/fonts/pk/ljfour/jknappen/ec/ectt0900.600pk> </Users/buffettliu/Library/texlive/2026basic/texmf-var/fonts/pk/ljfour/jknappen/ec/ectt0800.525pk> </Users/buffettliu/Library/texlive/2026basic/texmf-var/fonts/pk/ljfour/jknappen/ec/ecit0800.525pk> </Users/buffettliu/Library/texlive/2026basic/texmf-var/fonts/pk/ljfour/jknappen/ec/ectt1095.600pk> </Users/buffettliu/Library/texlive/2026basic/texmf-var/fonts/pk/ljfour/jknappen/ec/ectt1000.600pk> </Users/buffettliu/Library/texlive/2026basic/texmf-var/fonts/pk/ljfour/jknappen/ec/ectt1200.600pk></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cmextra/cmex7.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi10.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi5.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi6.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi7.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmmi9.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmr5.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmr6.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmr7.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmr8.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmr9.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy10.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy5.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy6.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/cm/cmsy7.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/symbols/msam10.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/symbols/msam5.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/public/amsfonts/symbols/msam7.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/urw/times/utmb8a.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/urw/times/utmr8a.pfb></usr/local/texlive/2026basic/texmf-dist/fonts/type1/urw/times/utmri8a.pfb>
-Output written on acl_latex.pdf (10 pages, 359079 bytes).
+Output written on acl_latex.pdf (11 pages, 370114 bytes).
 PDF statistics:
- 712 PDF objects out of 1000 (max. 8388607)
- 410 compressed objects within 5 object streams
- 96 named destinations out of 1000 (max. 500000)
- 101549 words of extra memory for PDF output out of 106986 (max. 10000000)
+ 760 PDF objects out of 1000 (max. 8388607)
+ 441 compressed objects within 5 object streams
+ 116 named destinations out of 1000 (max. 500000)
+ 101557 words of extra memory for PDF output out of 106986 (max. 10000000)
 

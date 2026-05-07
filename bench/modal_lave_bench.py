@@ -55,15 +55,17 @@ RESULTS_VOL = modal.Volume.from_name("dgrammar-results", create_if_missing=True)
     volumes={"/results": RESULTS_VOL},
 )
 def run_chunk(seed: int, limit: int, offset: int, steps: int,
-              dataset: str = "jsonschema", instance_timeout: int = 120):
+              dataset: str = "jsonschema", instance_timeout: int = 120,
+              instance_ids: str = "", gen_length: int = 256, tag: str = ""):
     import subprocess
     import shutil
     import os
 
     ds_safe = dataset.replace("/", "_")
     suffix = f"_off{offset}" if offset > 0 else ""
-    local_file = f"/root/results/lave_timed_{ds_safe}_s{seed}_t{steps}{suffix}.jsonl"
-    out_file = f"/results/lave_timed_{ds_safe}_s{seed}_t{steps}{suffix}.jsonl"
+    tag_sfx = f"_{tag}" if tag else ""
+    local_file = f"/root/results/lave_timed_{ds_safe}_s{seed}_t{steps}{suffix}{tag_sfx}.jsonl"
+    out_file = f"/results/lave_timed_{ds_safe}_s{seed}_t{steps}{suffix}{tag_sfx}.jsonl"
 
     if os.path.exists(out_file):
         os.remove(out_file)
@@ -73,6 +75,9 @@ def run_chunk(seed: int, limit: int, offset: int, steps: int,
             "python", "/root/run_lave_timed.py",
             str(seed), str(limit), dataset, str(steps), str(offset),
             str(instance_timeout),
+            instance_ids,   # argv[7]: comma-separated IDs or ""
+            str(gen_length), # argv[8]: generation length
+            tag,             # argv[9]: filename tag
         ],
         capture_output=True,
         text=True,
@@ -104,9 +109,21 @@ def main(
     chunks: int = 2,
     dataset: str = "jsonschema",
     instance_timeout: int = 120,
+    instance_ids: str = "",
+    gen_length: int = 256,
+    tag: str = "",
 ):
+    if instance_ids:
+        ids_list = instance_ids.split(",")
+        print(f"Running LAVE on 1x A100: {dataset}, seed={seed}, T={steps}, gen_length={gen_length}, tag={tag!r}")
+        print(f"Instance filter: {ids_list}")
+        handle = run_chunk.spawn(seed, len(ids_list), 0, steps, dataset, instance_timeout, instance_ids, gen_length, tag)
+        result = handle.get()
+        print(result)
+        return
+
     chunk_size = (total + chunks - 1) // chunks
-    print(f"Running LAVE timed on {chunks}x A100: {dataset}, seed={seed}, T={steps}, timeout={instance_timeout}s")
+    print(f"Running LAVE timed on {chunks}x A100: {dataset}, seed={seed}, T={steps}, gen_length={gen_length}, timeout={instance_timeout}s, tag={tag!r}")
     print(f"Total={total}, chunk_size={chunk_size}")
 
     handles = []
@@ -116,7 +133,7 @@ def main(
         if limit <= 0:
             break
         print(f"  Chunk {i}: offset={offset}, limit={limit}")
-        handles.append(run_chunk.spawn(seed, limit, offset, steps, dataset, instance_timeout))
+        handles.append(run_chunk.spawn(seed, limit, offset, steps, dataset, instance_timeout, "", gen_length, tag))
 
     for i, handle in enumerate(handles):
         result = handle.get()

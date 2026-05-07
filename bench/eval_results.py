@@ -96,6 +96,7 @@ def find_result_files(tag_filter=None):
         set(
             list(RESULTS_DIR.glob("*_jsonschema_*.jsonl"))
             + list(RESULTS_DIR.glob("*_jsonschemabench_*.jsonl"))
+            + list(RESULTS_DIR.glob("*_jsb_*_*.jsonl"))
         )
     )
     # Exclude compiled/eval output files
@@ -157,7 +158,7 @@ def main():
                 out.write(line)
 
         output_file = str(RESULTS_DIR / f"{base_name}.compiled.jsonl")
-        if "jsonschemabench" in base_name:
+        if "jsonschemabench" in base_name or "_jsb_" in base_name:
             eval_jsonschemabench(str(merged_file), output_file)
         else:
             eval_jsonschema(str(merged_file), output_file)

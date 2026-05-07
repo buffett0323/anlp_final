@@ -132,11 +132,17 @@ def main():
     steps = int(sys.argv[4]) if len(sys.argv) > 4 else 128
     offset = int(sys.argv[5]) if len(sys.argv) > 5 else 0
     instance_timeout = int(sys.argv[6]) if len(sys.argv) > 6 else 120
+    instance_ids_filter: set | None = None
+    if len(sys.argv) > 7 and sys.argv[7]:
+        instance_ids_filter = set(sys.argv[7].split(","))
+    gen_length = int(sys.argv[8]) if len(sys.argv) > 8 and sys.argv[8] else 256
+    file_tag = sys.argv[9] if len(sys.argv) > 9 and sys.argv[9] else ""
 
     tag = "lave_timed"
     ds_safe = dataset_name.replace("/", "_")
     sfx = f"_off{offset}" if offset > 0 else ""
-    output_file = f"results/{tag}_{ds_safe}_s{seed}_t{steps}{sfx}.jsonl"
+    tag_sfx = f"_{file_tag}" if file_tag else ""
+    output_file = f"results/{tag}_{ds_safe}_s{seed}_t{steps}{sfx}{tag_sfx}.jsonl"
 
     # Patch Checker before any imports that use it
     patch_checker_class()
@@ -153,8 +159,12 @@ def main():
     model = patch_model_forward(model)
 
     all_instances = sorted(dataset, key=lambda x: x.instance_id())
-    instances = all_instances[offset:offset + limit]
-    print(f"LAVE timed: {len(instances)} instances, seed={seed}, T={steps}")
+    if instance_ids_filter is not None:
+        instances = [inst for inst in all_instances if inst.instance_id() in instance_ids_filter]
+    else:
+        instances = all_instances[offset:offset + limit]
+    block_length = gen_length // 8
+    print(f"LAVE timed: {len(instances)} instances, seed={seed}, T={steps}, gen_length={gen_length}, block_length={block_length}")
 
     for i, instance in enumerate(instances):
         # Get the per-instance lark grammar (LAVE uses lark, not JSON schema)
@@ -182,8 +192,8 @@ def main():
                 input_len=input_len,
                 grammar=cfg_lang,
                 steps=steps,
-                gen_length=256,
-                block_length=32,
+                gen_length=gen_length,
+                block_length=block_length,
                 temperature=0.2,
                 remasking="low_confidence",
                 trace=False,

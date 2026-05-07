@@ -368,6 +368,14 @@ def _enrich_empty_brackets(
         log_probs = F.log_softmax(logits.to(torch.float64), dim=-1)
 
         # DP: fill [close_pos, expand_end) with best grammar-valid content.
+        # At close_pos specifically, exclude the close bracket token so the DP
+        # is forced to generate at least one element/property.  If no other
+        # grammar-valid token exists in top-K (schema genuinely requires empty),
+        # dp_fix_prefix returns None and we fall through to restore the original.
+        close_tok_id = bracket_pair[tid]
+        saved_lp = log_probs[0, close_pos, close_tok_id].item()
+        log_probs[0, close_pos, close_tok_id] = float('-inf')
+
         fixes = dp_fix_prefix(
             replay_m.deep_copy(),
             x, close_pos, log_probs, mask_id,
@@ -376,6 +384,8 @@ def _enrich_empty_brackets(
             end_pos=expand_end,
             include_masked=True,
         )
+
+        log_probs[0, close_pos, close_tok_id] = saved_lp  # restore
 
         if fixes is not None and len(fixes) > 0:
             for fpos, ftok in fixes:
@@ -387,7 +397,7 @@ def _enrich_empty_brackets(
             total_changed += len(fixes)
             pos = expand_end
         else:
-            # DP returned no changes ([] / {} is still optimal) — restore.
+            # DP returned no changes or None ([] / {} is still optimal) — restore.
             x[0, open_pos:expand_end] = x_backup
             pos += 2
 
@@ -441,6 +451,7 @@ def generate_dp(
     max_dp_secs: float = 300.0,
     deviation_penalty: float = 0.0,
     stats=None,
+    min_complete_frac: float = 0.0,
 ):
     """Dgrammar with DP-based violation correction + async mask overlap.
 
@@ -472,6 +483,7 @@ def generate_dp(
     num_blocks = gen_length // block_length
     assert steps % num_blocks == 0
     steps_per_block = steps // num_blocks
+    _min_complete_step = int(steps * min_complete_frac)  # earliest step where complete=True is allowed
 
     gen_start = prompt.shape[1]
     consume_idx = gen_start
@@ -515,6 +527,7 @@ def generate_dp(
 
         complete = False
         for i in range(steps_per_block):
+            _global_step = num_block * steps_per_block + i
             if complete:
                 break
 
@@ -641,7 +654,12 @@ def generate_dp(
 
                 if violator < 0:
                     consume_idx = new_idx
-                    current_batch = min(current_batch * 2, max_batch_size)
+                    # Only allow batch to grow after 75% of steps have elapsed.
+                    # In early steps this keeps current_batch=1, giving the model
+                    # one forward pass per committed token so richer context
+                    # accumulates before colour/string values are fixed.
+                    if _global_step >= steps * 3 // 4:
+                        current_batch = min(current_batch * 2, max_batch_size)
                 else:
                     total_violations += 1
                     consume_idx = new_idx   # checker is now at the violator position
@@ -651,24 +669,72 @@ def generate_dp(
                         pending_mask[0].join()
                         pending_mask = None
 
-                    if checker.is_accepting():
+                    if checker.is_accepting() and _global_step >= _min_complete_step:
                         for j in range(violator, x.shape[1]):
                             x[0, j] = eos_id
                         complete = True
                         current_batch = 1
                         continue
 
-                    # ── DP violation fix ─────────────────────────────────────
-                    # Narrow the DP span to just the violated constraint window
-                    # [consume_idx, constraint_end), then resume greedy from
-                    # constraint_end onwards.  This preserves the model's original
-                    # tokens after the constraint boundary (e.g. surrounding JSON
-                    # structure after a bad UUID string), avoiding degenerate
-                    # collapses to [] or {} that occur when the DP spans too far.
-                    # Compute bracket depth at consume_idx by scanning the
-                    # already-consumed prefix [gen_start, consume_idx).
-                    # This gives find_constraint_end the correct initial depth
-                    # so it won't stop inside an unclosed [ or {.
+                    # ── Phase 1: greedy retry (DGrammar-style, bounded) ──────
+                    # Try the top-10 tokens at the violator in logit order.
+                    # Failed attempts do NOT count against the global resample
+                    # budget — only a successful commit or fallthrough to DP
+                    # affects `resamples`.  This prevents a hard violation (valid
+                    # token rank > 10) from burning the entire 100-resample
+                    # budget before DP ever gets a chance to run.
+                    greedy_fixed = False
+                    _greedy_attempts = 0
+                    _MAX_GREEDY = 10
+                    while _greedy_attempts < _MAX_GREEDY:
+                        next_vocab = torch.argmax(logits_with_noise[0, violator]).item()
+                        if logits_with_noise[0, violator, next_vocab] == -np.inf:
+                            break  # exhausted — fall through to DP
+
+                        t_gc_r = time.perf_counter()
+                        c_try = checker.matcher.try_consume_tokens([next_vocab])
+                        if stats is not None:
+                            stats.grammar_check_times.append(time.perf_counter() - t_gc_r)
+
+                        if c_try == 1:
+                            x[0, violator] = next_vocab
+                            consume_idx += 1
+                            tokens_placed_this_step += 1
+                            if stats is not None:
+                                stats.tokens_unmasked += 1
+                            # greedy resume: consume original tokens that are now valid
+                            further_idx, further_viol = _extend_prefix(
+                                checker, x, consume_idx, mask_id
+                            )
+                            consume_idx = further_idx
+                            if further_viol >= 0:
+                                x[0, consume_idx] = mask_id
+                                resamples.append((consume_idx, time.monotonic() - start_time))
+                                tokens_placed_this_step -= 1
+                                if stats is not None:
+                                    stats.resample_count += 1
+                                    stats.tokens_unmasked -= 1
+                                if len(resamples) >= max_resamples:
+                                    yield x, resamples, False, total_violations, total_fixes, total_dp_calls, consume_idx
+                                    return
+                            greedy_fixed = True
+                            break
+
+                        # token rejected: blacklist it and try the next-best
+                        # (not counted as a resample — greedy attempts are free)
+                        logits_with_noise[0, violator, next_vocab] = -np.inf
+                        _greedy_attempts += 1
+
+                    if greedy_fixed:
+                        current_batch = 1
+                        continue
+
+                    # ── Phase 2: DP fallback (only when greedy retry exhausted) ─
+                    # Greedy retry ran out of valid tokens in the current logits.
+                    # This happens for complex grammar constraints (e.g. a UUID regex)
+                    # where no single top-K token at position c is independently
+                    # valid — the grammar needs a globally consistent sequence.
+                    # DP searches over [c, constraint_end) jointly.
                     _init_depth = 0
                     for _bp in range(gen_start, consume_idx):
                         _btid = x[0, _bp].item()
@@ -696,28 +762,47 @@ def generate_dp(
                     dp_succeeded = False
 
                     if constraint_end > consume_idx:
-                        fixes = dp_fix_prefix(
-                            checker.matcher.deep_copy(),
-                            x, consume_idx, log_probs, mask_id, top_k=top_k_dp,
-                            deviation_penalty=deviation_penalty,
-                            end_pos=constraint_end,
-                        )
+                        # Progressive window expansion: try [c, c+1), [c, c+2), [c, c+4), ...
+                        fixes = None
+                        used_end = constraint_end
+                        span = constraint_end - consume_idx
+                        ws = 1
+                        while ws < span:
+                            trial_end = consume_idx + ws
+                            trial_fixes = dp_fix_prefix(
+                                checker.matcher.deep_copy(),
+                                x, consume_idx, log_probs, mask_id, top_k=top_k_dp,
+                                deviation_penalty=deviation_penalty,
+                                end_pos=trial_end,
+                            )
+                            if trial_fixes is not None:
+                                fixes = trial_fixes
+                                used_end = trial_end
+                                break
+                            ws *= 2
+
+                        if fixes is None:  # full window fallback
+                            fixes = dp_fix_prefix(
+                                checker.matcher.deep_copy(),
+                                x, consume_idx, log_probs, mask_id, top_k=top_k_dp,
+                                deviation_penalty=deviation_penalty,
+                                end_pos=constraint_end,
+                            )
+                            used_end = constraint_end
 
                         if fixes is not None:
                             for fpos, ftok in fixes:
                                 x[0, fpos] = ftok
                             total_fixes += len(fixes)
                             if trace and fixes:
-                                print(f"  DP fixed {len(fixes)} pos in [{consume_idx-gen_start},{constraint_end-gen_start}): "
+                                print(f"  DP fixed {len(fixes)} pos in [{consume_idx-gen_start},{used_end-gen_start}): "
                                       f"{[(p - gen_start, ftok) for p, ftok in fixes]}")
 
-                            # Advance matcher over the DP-fixed window [consume_idx, constraint_end).
-                            dp_tokens = [x[0, p].item() for p in range(consume_idx, constraint_end)]
+                            dp_tokens = [x[0, p].item() for p in range(consume_idx, used_end)]
                             c = checker.matcher.try_consume_tokens(dp_tokens)
                             consume_idx += c
 
                             if c < len(dp_tokens):
-                                # DP window still has a violation — remask and retry.
                                 x[0, consume_idx] = mask_id
                                 resamples.append((consume_idx, time.monotonic() - start_time))
                                 tokens_placed_this_step -= 1
@@ -728,14 +813,11 @@ def generate_dp(
                                     yield x, resamples, False, total_violations, total_fixes, total_dp_calls, consume_idx
                                     return
                             else:
-                                # DP window clean — greedily resume from constraint_end
-                                # to consume any original tokens that are now valid.
                                 resume_tokens = [x[0, p].item() for p in range(consume_idx, seg_end)]
                                 if resume_tokens:
                                     c2 = checker.matcher.try_consume_tokens(resume_tokens)
                                     consume_idx += c2
                                     if c2 < len(resume_tokens):
-                                        # A later token violates — remask it.
                                         x[0, consume_idx] = mask_id
                                         resamples.append((consume_idx, time.monotonic() - start_time))
                                         tokens_placed_this_step -= 1
@@ -749,8 +831,6 @@ def generate_dp(
                             dp_succeeded = True
 
                     if not dp_succeeded:
-                        # DP found no valid path: fall back to remasking the violator
-                        # and letting the model retry (same as the original method).
                         x[0, violator] = mask_id
                         resamples.append((violator, time.monotonic() - start_time))
                         tokens_placed_this_step -= 1
@@ -765,7 +845,7 @@ def generate_dp(
                     current_batch = 1
 
                 # ── Completion checks ────────────────────────────────────────
-                if not complete and checker.is_accepting():
+                if not complete and checker.is_accepting() and _global_step >= _min_complete_step:
                     gen_ids = x[0, gen_start:].tolist()
                     first_mask = next(
                         (j for j, t in enumerate(gen_ids) if t == mask_id), len(gen_ids)

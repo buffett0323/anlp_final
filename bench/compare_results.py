@@ -6,6 +6,9 @@ Auto-scan results/ and produce:
 Groups JSONL files by stripping trailing _offNNN shards, merges records
 (dedup by instance_id, last shard wins), and computes stats per dataset.
 
+When present under each record's timing object, also aggregates driver-reported
+constraint overhead (%), effective constraint (%), and per-token mean times (ms).
+
 Usage:
     python bench/compare_results.py
 """
@@ -33,7 +36,7 @@ METHOD_ORDER = ["lave", "dgrammar_v2_async", "dgrammar_dp"]
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 def _base_name(stem: str) -> str:
-    return re.sub(r"_off\d+$", "", stem)
+    return re.sub(r"_off\d+", "", stem)
 
 
 def load_jsonl(path: Path) -> list[dict]:
@@ -96,6 +99,28 @@ def compute_stats(records: list[dict], benchmark_total: int) -> dict:
         lo, hi = int(idx), min(int(idx) + 1, len(clean) - 1)
         return clean[lo] + (clean[hi] - clean[lo]) * (idx - lo)
 
+    constraint_pcts: list[float] = []
+    effective_pcts: list[float] = []
+    per_tok_c: list[float] = []
+    per_tok_t: list[float] = []
+    for r in records:
+        t = r.get("timing")
+        if not isinstance(t, dict):
+            continue
+        c = _safe(t.get("constraint_pct"))
+        if c is not None:
+            constraint_pcts.append(c)
+        if "effective_constraint_pct" in t:
+            e = _safe(t.get("effective_constraint_pct"))
+            if e is not None:
+                effective_pcts.append(e)
+        ptc = _safe(t.get("per_token_constraint_ms"))
+        if ptc is not None:
+            per_tok_c.append(ptc)
+        ptt = _safe(t.get("per_token_total_ms"))
+        if ptt is not None:
+            per_tok_t.append(ptt)
+
     return {
         "benchmark_total": benchmark_total,
         "skipped":         skipped,
@@ -104,6 +129,10 @@ def compute_stats(records: list[dict], benchmark_total: int) -> dict:
         "valid_rate":      _pct(valid_count),
         "timeout_count":   timeout_count,
         "mean_resamples":  _stat(resamples, lambda l: sum(l) / len(l)),
+        "mean_constraint_pct": _stat(constraint_pcts, lambda l: sum(l) / len(l)),
+        "mean_effective_constraint_pct": _stat(effective_pcts, lambda l: sum(l) / len(l)),
+        "mean_per_token_constraint_ms": _stat(per_tok_c, lambda l: sum(l) / len(l)),
+        "mean_per_token_total_ms": _stat(per_tok_t, lambda l: sum(l) / len(l)),
         "mean_time_s":     _stat(times, lambda l: sum(l) / len(l)),
         "median_time_s":   _stat(times, statistics.median),
         "p95_time_s":      _percentile(times, 95),
@@ -181,12 +210,16 @@ def compare_dataset(
 
     metric_rows = [
         ("Benchmark total",         "benchmark_total", "{:.0f}"),
-        ("Skipped (grammar-invalid)","skipped",         "{:.0f}"),
-        ("Evaluated (n)",            "n",               "{:.0f}"),
+        ("Not in all methods",      "skipped",         "{:.0f}"),
+        ("Evaluated (n, intersection)","n",            "{:.0f}"),
         ("Valid (count)",            "valid_count",     "{:.0f}"),
         ("Validity (%)",             "valid_rate",      "{:.1%}"),
         (f"Timeouts (>{TIMEOUT_S:.0f}s)", "timeout_count", "{:.0f}"),
         ("Mean resamples",           "mean_resamples",  "{:.2f}"),
+        ("Constraint overhead (%)",  "mean_constraint_pct", "{:.1f}"),
+        ("Effective constraint (%)", "mean_effective_constraint_pct", "{:.1f}"),
+        ("Per-token constraint (ms)", "mean_per_token_constraint_ms", "{:.3f}"),
+        ("Per-token total (ms)",     "mean_per_token_total_ms", "{:.2f}"),
         ("Mean time (s)",            "mean_time_s",     "{:.2f}"),
         ("Median time (s)",          "median_time_s",   "{:.2f}"),
         ("P95 time (s)",             "p95_time_s",      "{:.2f}"),
@@ -283,7 +316,7 @@ def compare_dataset(
     # Skipped / evaluated block (no bolding — these are just counts)
     skipped_vals = [str(stats[b]["skipped"]) for b in bases]
     eval_vals    = [str(stats[b]["n"])       for b in bases]
-    lx.append(f"  {'Skipped (grammar-invalid)':<44} & {' & '.join(skipped_vals)} \\\\")
+    lx.append(f"  {'Not evaluated by all methods':<44} & {' & '.join(skipped_vals)} \\\\")
     lx.append(f"  {'Evaluated ($n$)':<44} & {' & '.join(eval_vals)} \\\\")
     lx.append(midrule())
 
@@ -297,6 +330,14 @@ def compare_dataset(
     lx.append(row(f"Timeouts ($>${TIMEOUT_S:.0f}\\,s)", "timeout_count", "{:.0f}",
                   higher_is_better=False))
     lx.append(row("Mean resamples\\,$^\\S$", "mean_resamples", "{:.2f}",
+                  higher_is_better=False))
+    lx.append(row("Constraint overhead (\\%)", "mean_constraint_pct", "{:.1f}",
+                  higher_is_better=False))
+    lx.append(row("Effective constraint (\\%)", "mean_effective_constraint_pct", "{:.1f}",
+                  higher_is_better=False))
+    lx.append(row("Per-token constraint (ms)", "mean_per_token_constraint_ms", "{:.3f}",
+                  higher_is_better=False))
+    lx.append(row("Per-token total (ms)", "mean_per_token_total_ms", "{:.2f}",
                   higher_is_better=False))
     lx.append(midrule())
 

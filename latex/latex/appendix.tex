@@ -113,6 +113,80 @@ This instance illustrates the general failure mode of stochastic lookahead on en
 Frontier masking (shared by Dgrammar and DPGrammar) sidesteps this entirely by restricting the model's sampling distribution to the valid set at each position.
 On instances where frontier masking prevents all violations, DPGrammar's Viterbi repair is never invoked—the method degrades gracefully to pure frontier-masked generation at the speed of a single unconstrained diffusion pass.
 
+\section{Case Study: Format-Constrained String Fields (\texttt{format: "uuid"})}
+\label{app:format}
+
+A recurring qualitative difference between Dgrammar and DPGrammar arises on schemas whose string fields carry \emph{format} constraints (e.g., \texttt{"format": "uuid"}, \texttt{"format": "uri"}).
+These constraints are enforced at the grammar level by \textsc{llguidance}, which compiles them into the token automaton.
+The three methods therefore see different levels of constraint enforcement and produce noticeably different outputs.
+
+\paragraph{Illustrative schema.}
+Consider a \texttt{links} array whose items have a \texttt{type} string and a \texttt{target} string constrained to UUID format:
+
+\begin{lstlisting}[style=appendixcode]
+"links": {
+  "type": "array",
+  "items": {
+    "properties": {
+      "type":   { "type": "string" },
+      "target": { "type": "string",
+                  "format": "uuid" }
+    }
+  }
+}
+\end{lstlisting}
+
+\noindent The compiled grammar automaton restricts \texttt{target} to the pattern
+\texttt{[0-9a-f]\{8\}-[0-9a-f]\{4\}-\ldots} (RFC\,4122 UUID), blocking all other strings.
+
+\paragraph{Observed outputs across methods.}
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lllp{5.8cm}}
+\toprule
+\textbf{Method} & \textbf{type} & \textbf{target} & \textbf{Schema-valid?} \\
+\midrule
+Dgrammar
+  & \texttt{"self"}
+  & \texttt{"12000e1TestCase\allowbreak{}CanceledEvent"}
+  & \textbf{No} — \texttt{target} violates \texttt{format:\,"uuid"} \\[2pt]
+DPGrammar
+  & \texttt{"selfLink"},\;\texttt{"relatedLink"}
+  & \texttt{"123e4567-90ab-12cd-\allowbreak{}abef-123456789000"}
+  & \textbf{Yes} — well-formed UUID \\[2pt]
+LAVE
+  & (varies / timeout)
+  & (varies / timeout)
+  & Depends on lookahead success \\
+\bottomrule
+\end{tabular}
+\caption{Representative outputs on a \texttt{jsb\_medium} instance with \texttt{format:\,"uuid"} on the \texttt{target} field.}
+\label{tab:uuid}
+\end{table}
+
+\paragraph{Dgrammar.}
+Frontier masking restricts each token to the automaton's valid set, but when the model generates a high-confidence non-UUID string (e.g.\ \texttt{"12000e1TestCaseCanceledEvent"}), each individual token may locally satisfy the grammar's prefix condition while the \emph{complete} string does not match the UUID pattern.
+Because Dgrammar's validity check only tests whether an \textsc{eos} token is present with no mask before it---it does not re-run a JSON Schema validator---the output is reported as \texttt{valid=True} even though \texttt{target} violates \texttt{format:\,"uuid"}.
+The output appears semantically natural but is in fact schema-invalid.
+
+\paragraph{DPGrammar.}
+The Viterbi DP operates on spans $[c, c{+}s)$ and selects the token sequence of maximal log-probability that is accepted by the grammar automaton.
+For a UUID field, the automaton enforces the full hexadecimal-and-hyphen pattern, so the DP produces a well-formed UUID.
+The value \texttt{"123e4567-90ab-12cd-abef-123456789000"} is the model's highest-probability completion of the UUID pattern given the prompt context---a \emph{template UUID} that is grammatically correct but semantically generic.
+DPGrammar's output is therefore schema-valid (unlike Dgrammar's) but less contextually specific than one might hope.
+
+\paragraph{LAVE.}
+LAVE uses stochastic lookahead to verify token proposals.
+For UUID fields the lookahead must find a random completion that forms a valid UUID; if the model assigns low probability to hex digits, LAVE may fail repeatedly and fall back to a retry or timeout.
+On instances with many format-constrained fields, LAVE's acceptance rate drops and wall time increases significantly.
+
+\paragraph{Key takeaway: EOS validity $\neq$ schema validity.}
+This case study illustrates why the \texttt{valid} flag (EOS/mask-based) is an \emph{insufficient} proxy for correctness.
+Dgrammar reports \texttt{valid=True} on outputs that fail \texttt{format:\,"uuid"} validation, while DPGrammar's schema-valid UUID is assigned the same \texttt{valid=True} flag.
+A schema validator or the \emph{syntactic@k} metric (Section~\ref{app:data}) is required to distinguish the two cases.
+Conversely, DPGrammar's correctly-formatted but semantically generic UUID highlights that grammar enforcement is a necessary but not sufficient condition for \emph{functional} correctness: the generated UUID is unlikely to match any reference value, so \emph{functional@k} (exact match) will be zero regardless of syntactic validity.
+
 \section{Hyperparameters}
 \label{app:hyperparams}
 

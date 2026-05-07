@@ -295,8 +295,12 @@ def _minimal_json_value(schema, depth=0, root_schema=None):
         items_schema = schema.get("items", {})
         if not isinstance(items_schema, dict):
             items_schema = {}
+        # Generate at least 1 item when an items schema is present, even if
+        # minItems=0.  Returning [] is technically valid but semantically useless
+        # as a fallback — the schema's items definition implies non-empty intent.
+        n_items = max(min_items, 1 if items_schema else 0)
         return [_minimal_json_value(items_schema, depth + 1, root_schema)
-                for _ in range(max(0, min_items))]
+                for _ in range(n_items)]
 
     # object (explicit or implied by presence of properties/required)
     if type_ == "object" or "properties" in schema or "required" in schema:
@@ -938,16 +942,21 @@ def main():
     if len(sys.argv) > 8 and sys.argv[8]:
         instance_ids_filter = set(sys.argv[8].split(","))
     deviation_penalty = float(sys.argv[9]) if len(sys.argv) > 9 else 0.0
+    # Optional tag suffix to avoid overwriting main results (e.g. "debug", "devpen3")
+    file_tag = sys.argv[10] if len(sys.argv) > 10 and sys.argv[10] else ""
+    gen_length = int(sys.argv[11]) if len(sys.argv) > 11 and sys.argv[11] else 256
+    min_complete_frac = float(sys.argv[12]) if len(sys.argv) > 12 and sys.argv[12] else 0.0
 
     if method == "dp":
-        tag = "dp"
+        method_tag = "dp"
     elif not block_ar:
-        tag = "v2_async_ac4_fullpar_timed"
+        method_tag = "v2_async_ac4_fullpar_timed"
     else:
-        tag = "v2_async_ac4_timed"
+        method_tag = "v2_async_ac4_timed"
     ds_safe = dataset_name.replace("/", "_")
     sfx = f"_off{offset}" if offset > 0 else ""
-    output_file = f"results/{tag}_{ds_safe}_s{seed}_t{steps}{sfx}.jsonl"
+    tag_sfx = f"_{file_tag}" if file_tag else ""
+    output_file = f"results/{method_tag}_{ds_safe}_s{seed}_t{steps}{sfx}{tag_sfx}.jsonl"
 
     if method == "dp":
         from dgrammar.dp_generate import generate_dp
@@ -964,8 +973,19 @@ def main():
         instances = [inst for inst in all_instances if inst.instance_id() in instance_ids_filter]
     else:
         instances = all_instances[offset:offset + limit]
-    bl = 32 if block_ar else 256
-    print(f"Dgrammar timed [{method}]: {len(instances)} instances, seed={seed}, T={steps}, block_length={bl}")
+    bl = (gen_length // 8) if block_ar else gen_length
+    print(f"Dgrammar timed [{method}]: {len(instances)} instances, seed={seed}, T={steps}, gen_length={gen_length}, block_length={bl}")
+
+    # Load ground-truth for functional@k (JSON-Mode-Eval / jsonschema dataset only)
+    _gt_solutions: list[str] | None = None
+    if dataset_name == "jsonschema":
+        try:
+            from datasets import load_dataset as _hf_load
+            _gt_ds = _hf_load("eth-sri/json-mode-eval-extended", split="test")
+            _gt_solutions = [row["output"] for row in _gt_ds]
+            print(f"  Loaded {len(_gt_solutions)} ground-truth solutions for functional@k")
+        except Exception as _e:
+            print(f"  Warning: could not load ground truth ({_e}); passed_tests will be absent")
 
     cached_checker = None
 
@@ -989,10 +1009,42 @@ def main():
         if _tids:
             _fc_closing_ids.add(_tids[-1])
 
+    _fn_start = time.monotonic()
+    # Leave a 5-minute buffer before Modal's hard kill (timeout=7200s).
+    _FN_DEADLINE = _fn_start + 7200.0 - 300.0
+
+    def _write_timeout(inst, reason="timed_out"):
+        _method_tag = "dgrammar_dp" if method == "dp" else "dgrammar_v2_async"
+        rec = {
+            "instance_id": inst.instance_id(),
+            "method": _method_tag,
+            "valid": False,
+            "extracted": None,
+            "time_taken": None,
+            "resamples": 0,
+            "timed_out": True,
+            "timed_out_reason": reason,
+        }
+        _inst_data = getattr(inst, "data", None)
+        if isinstance(_inst_data, dict) and _inst_data.get("schema") is not None:
+            rec["schema"] = _inst_data["schema"]
+        Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+        with open(output_file, "a") as f:
+            print(json.dumps(rec), flush=True, file=f)
+
     for i, instance in enumerate(instances):
+        # Write timeout placeholders for all remaining instances if we're running
+        # out of the Modal function's wall-clock budget.
+        if time.monotonic() > _FN_DEADLINE:
+            print(f"  Approaching Modal timeout — writing timed_out for remaining {len(instances)-i} instances")
+            for remaining in instances[i:]:
+                _write_timeout(remaining, "modal_deadline")
+            break
+
         schema_str = instance.data.get("schema", "")
         if not schema_str:
             print(f"  Skipping {instance.instance_id()}: no schema")
+            _write_timeout(instance, "no_schema")
             continue
 
         try:
@@ -1001,11 +1053,17 @@ def main():
             checker = cached_checker.clone()
         except Exception as e:
             print(f"  Skipping {instance.instance_id()}: {e}")
+            _write_timeout(instance, f"checker_init_error: {e}")
             continue
 
-        prompt_ids, prompt_len, suffix_str, start_line, prompt_raw = (
-            eval_model.prepare_prompt(instance, tokenizer, model, trace=False)
-        )
+        try:
+            prompt_ids, prompt_len, suffix_str, start_line, prompt_raw = (
+                eval_model.prepare_prompt(instance, tokenizer, model, trace=False)
+            )
+        except Exception as e:
+            print(f"  Error preparing prompt for {instance.instance_id()}: {e}")
+            _write_timeout(instance, f"prompt_error: {e}")
+            continue
 
         print(f"[{i+1}/{len(instances)}] {instance.instance_id()} ...")
         STATS.reset()
@@ -1035,10 +1093,10 @@ def main():
             _gen_t0 = time.monotonic()
             for out, resamples, valid, violations, remasks, grammar_checks, dp_consume_idx in gen_fn(
                 model, prompt_ids, tokenizer, checker=checker,
-                prompt_len=prompt_len, steps=steps, gen_length=256,
+                prompt_len=prompt_len, steps=steps, gen_length=gen_length,
                 block_length=bl, temperature=0.2, remasking="low_confidence",
                 max_batch_size=8, max_resamples=100, max_dp_secs=240.0,
-                deviation_penalty=deviation_penalty, **gen_kwargs,
+                deviation_penalty=deviation_penalty, min_complete_frac=min_complete_frac, **gen_kwargs,
             ):
                 total_violations = violations
                 total_remasks = remasks
@@ -1047,7 +1105,7 @@ def main():
         else:
             for out, resamples, valid, violations, remasks, grammar_checks in gen_fn(
                 model, prompt_ids, tokenizer, checker=checker,
-                prompt_len=prompt_len, steps=steps, gen_length=256,
+                prompt_len=prompt_len, steps=steps, gen_length=gen_length,
                 block_length=bl, temperature=0.2, remasking="low_confidence",
                 max_batch_size=8, max_resamples=100, **gen_kwargs,
             ):
@@ -1238,17 +1296,45 @@ def main():
                         if not valid:
                             _p3b_t0 = time.monotonic()
                             _p3b_chk = _p3b_fresh()
+
+                            # Direction C (DP method): replay DP-validated tokens into a
+                            # fresh checker and copy them into the output tensor so the
+                            # model continues from dp_consume_idx with full context.
+                            # Without this, autocomplete starts from an all-mask tensor
+                            # (no prior context) and produces "x"/template placeholder
+                            # values because the model has nothing to condition on.
+                            _p3b_start = gen_start_ac
+                            _p3b_replayed = False
+                            if method == "dp" and dp_consume_idx is not None and dp_consume_idx > gen_start_ac:
+                                _replay_toks = [out[0, p].item() for p in range(gen_start_ac, dp_consume_idx)]
+                                if _p3b_chk.consume_tokens(_replay_toks):
+                                    _p3b_start = dp_consume_idx
+                                    _p3b_replayed = True
+                                    print(f"  [pass3b/dp] replay {len(_replay_toks)} tok → start +{dp_consume_idx - gen_start_ac}")
+                                else:
+                                    _p3b_chk = _p3b_fresh()  # replay failed; start over
+                                    print(f"  [pass3b/dp] replay FAILED, starting fresh")
+
                             out_p3b = torch.full(
-                                (1, gen_start_ac + 768), mask_id_val,
+                                (1, _p3b_start + 768), mask_id_val,
                                 dtype=torch.long, device=model.device,
                             )
                             out_p3b[0, :gen_start_ac] = prompt_ids[0].to(model.device)
-                            # closing_bonus=100 strongly prefers closing at comma/brace
-                            # positions (len(valid_ids)<=32 guard keeps it fast).
+                            if _p3b_replayed:
+                                # Copy DP-validated prefix into the tensor so the model
+                                # sees the real generated context during autocomplete.
+                                out_p3b[0, gen_start_ac:dp_consume_idx] = (
+                                    out[0, gen_start_ac:dp_consume_idx].to(model.device)
+                                )
+
                             out_p3b, _p3b_steps, _p3b_mask_ms, _p3b_fwd_ms, _p3b_cidx, _p3b_tc_ms = autocomplete_greedy(
-                                model, out_p3b, _p3b_chk, gen_start_ac, gen_start_ac,
+                                model, out_p3b, _p3b_chk, _p3b_start, gen_start_ac,
                                 mask_id=mask_id_val, eos_id=eos_id_val,
-                                closing_bonus=100.0, max_steps=512,
+                                # Use moderate closing bonus when continuing from DP frontier
+                                # (model has context; no need to close aggressively).
+                                # Use large bonus when starting fresh (last-resort close).
+                                closing_bonus=10.0 if _p3b_replayed else 100.0,
+                                max_steps=512,
                                 deadline=_p3b_t0 + 60.0,
                                 closing_token_ids=_fc_closing_ids,
                             )
@@ -1257,6 +1343,7 @@ def main():
                                 valid = True
                             _p3b_total_ms = (time.monotonic() - _p3b_t0) * 1000
                             print(f"  [pass3b] fast={'ok' if min_ids else 'fail'} ac_valid={valid} "
+                                  f"replayed={_p3b_replayed} "
                                   f"steps={_p3b_steps} mask={_p3b_mask_ms:.0f}ms fwd={_p3b_fwd_ms:.0f}ms "
                                   f"tc={_p3b_tc_ms:.0f}ms total={_p3b_total_ms:.0f}ms")
                     except Exception as e:
@@ -1318,6 +1405,25 @@ def main():
                 "mask_time_saved_ms": timing["mask_compute_total_ms"] - timing["mask_wait_total_ms"],
             },
         }
+
+        # Save schema (enables schema-validation post-processing for jsb datasets)
+        _inst_data = getattr(instance, 'data', None)
+        if isinstance(_inst_data, dict) and _inst_data.get("schema") is not None:
+            result["schema"] = _inst_data["schema"]
+
+        # Functional@k: exact match with ground truth (JSON-Mode-Eval only)
+        if _gt_solutions is not None:
+            try:
+                _task_idx = int(instance.instance_id().split("_")[-1])
+                _ref = _gt_solutions[_task_idx]
+                if extracted and _ref:
+                    _norm_e = json.dumps(json.loads(extracted), indent=4)
+                    _norm_r = json.dumps(json.loads(_ref), indent=4)
+                    result["passed_tests"] = (_norm_e == _norm_r)
+                else:
+                    result["passed_tests"] = False
+            except Exception:
+                result["passed_tests"] = False
 
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)
         with open(output_file, "a") as f:
